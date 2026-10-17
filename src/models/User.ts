@@ -10,7 +10,10 @@ export interface UserAttributes {
   lastName: string;
   password: string;
   phone?: string; // Made optional with '?'
-  role: 'ADMIN' | 'EMPLOYEE' | 'CLIENT';
+  serviceType?: string;
+  companyName?: string;
+  registrationNumber?: string;
+  role: 'ADMIN' | 'EMPLOYEE' | 'CLIENT' | 'PROVIDER';
   status: 'pending_email' | 'email_verified' | 'pending_approval' | 'active' | 'rejected' | 'deactivated';
   secretCode?: string;
   lastLogin?: Date;
@@ -31,7 +34,10 @@ export interface UserCreationAttributes extends Optional<UserAttributes,
   'approvedAt' | 
   'approvedBy' | 
   'verificationToken' | 
-  'verificationTokenExpires'
+  'verificationTokenExpires' | 
+  'serviceType' | 
+  'companyName' |
+  'registrationNumber'
 > {}
 
 // ✅ FIXED: Use 'declare' keyword to prevent shadowing and not use public/private keywords in Model definition
@@ -41,8 +47,11 @@ class User extends Model<UserAttributes, UserCreationAttributes> implements User
   declare firstName: string;
   declare lastName: string;
   declare phone?: string; // Made optional
+  declare serviceType?: string;
+  declare companyName?: string;
+  declare registrationNumber?: string;
   declare password: string;
-  declare role: 'ADMIN' | 'EMPLOYEE' | 'CLIENT';
+  declare role: 'ADMIN' | 'EMPLOYEE' | 'CLIENT' 'PROVIDER';
   declare status: 'pending_email' | 'email_verified' | 'pending_approval' | 'active' | 'rejected' | 'deactivated';
    declare secretCode?: string;
   declare lastLogin?: Date;
@@ -87,12 +96,27 @@ User.init(
       type: DataTypes.STRING(20),
       allowNull: true, // Already optional in database
     },
+    serviceType: {
+      type: DataTypes.STRING(255),
+      field: 'service_type',
+      allowNull: true,
+    },
+    companyName: {
+      type: DataTypes.STRING(255),
+      field: 'company_name',
+      allowNull: true,
+    },
+    registrationNumber: {
+      type: DataTypes.STRING(255),
+      field: 'registration_number',
+      allowNull: true,
+    },
     password: {
       type: DataTypes.STRING(255),
       allowNull: false,
     },
     role: {
-      type: DataTypes.ENUM('ADMIN', 'EMPLOYEE', 'CLIENT'),
+      type: DataTypes.ENUM('ADMIN', 'EMPLOYEE', 'CLIENT', 'PROVIDER'),
       defaultValue: 'CLIENT',
       allowNull: false,
     },
