@@ -33,6 +33,7 @@ export const register = catchAsync(async (req: Request, res: Response) => {
     serviceType,
     companyName,
     registrationNumber,
+    role: requestedRole
   } = req.body;
   
   const ipAddress = req.ip;
