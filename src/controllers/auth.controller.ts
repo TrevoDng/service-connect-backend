@@ -146,7 +146,7 @@ export const register = catchAsync(async (req: Request, res: Response) => {
     let verificationToken = undefined;
     let tokenExpires = undefined;
     
-    if (role === 'EMPLOYEE') {
+    if (role === 'EMPLOYEE' || role === 'PROVIDER') {
       verificationToken = generateVerificationToken();
       tokenExpires = getTokenExpiry(24);
     }
@@ -165,6 +165,9 @@ export const register = catchAsync(async (req: Request, res: Response) => {
       verificationToken: verificationToken,
       verificationTokenExpires: tokenExpires,
       secretCode: validatedSecretCode,
+      serviceType: role === 'PROVIDER' ? serviceType : undefined,
+      companyName: role === 'PROVIDER' ? companyName : undefined,
+      registrationNumber: role === 'PROVIDER' ? registrationNumber : undefined,
     }, { transaction });
 
     // If we have a secret code, update it with the user ID
@@ -209,7 +212,10 @@ export const register = catchAsync(async (req: Request, res: Response) => {
         id: user.id,
         name: `${user.firstName} ${user.lastName}`,
         email: user.email,
-        role: user.role
+        role: user.role,
+	serviceType: user.serviceType,
+        companyName: user.companyName,
+        registrationNumber: user.registrationNumber,
       },
       requiresEmailVerification,
       requiresAdminApproval
@@ -254,7 +260,7 @@ export const login = catchAsync(async (req: Request, res: Response) => {
       return res.error('Customer account is not active. Please contact support.', 403, 'ACCOUNT_INACTIVE');
     }
 
-    if (user.role === 'EMPLOYEE') {
+    if (user.role === 'EMPLOYEE' || user.role === 'PROVIDER') {
       if (user.status === 'pending_email') {
         return res.error('Please verify your email before logging in.', 403, 'EMAIL_NOT_VERIFIED');
       }
@@ -296,7 +302,12 @@ export const login = catchAsync(async (req: Request, res: Response) => {
         firstName: user.firstName,
         lastName: user.lastName,
         email: user.email,
-        role: user.role
+        role: user.role,
+	phone: user.phone,
+        status: user.status,
+        serviceType: user.serviceType,
+        companyName: user.companyName,
+        registrationNumber: user.registrationNumber,
       }
     }, 'Login successful');
     
@@ -346,7 +357,7 @@ export const verifyEmail = catchAsync(async (req: Request, res: Response) => {
     let newStatus: 'pending_approval' | 'active';
     let message: string;
     
-    if (user.role === 'EMPLOYEE') {
+    if (user.role === 'EMPLOYEE' || user.role === 'PROVIDER') {
       newStatus = 'pending_approval';
       message = 'Email verified! Your registration is now pending admin approval. You will be notified once approved.';
     } else {
