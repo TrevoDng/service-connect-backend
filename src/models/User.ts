@@ -51,7 +51,7 @@ class User extends Model<UserAttributes, UserCreationAttributes> implements User
   declare companyName?: string;
   declare registrationNumber?: string;
   declare password: string;
-  declare role: 'ADMIN' | 'EMPLOYEE' | 'CLIENT' 'PROVIDER';
+  declare role: 'ADMIN' | 'EMPLOYEE' | 'CLIENT' | 'PROVIDER';
   declare status: 'pending_email' | 'email_verified' | 'pending_approval' | 'active' | 'rejected' | 'deactivated';
    declare secretCode?: string;
   declare lastLogin?: Date;
