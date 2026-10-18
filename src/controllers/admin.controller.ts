@@ -336,10 +336,10 @@ getActiveEmployees = catchAsync(async (req: Request, res: Response) => {
   getPendingEmployees = catchAsync(async (req: Request, res: Response) => {
     const pendingEmployees = await User.findAll({
       where: {
-        role: 'EMPLOYEE',
+        role: {[Op.in]: ['EMPLOYEE', 'PROVIDER']},
         status: 'pending_approval'
       },
-      attributes: ['id', 'email', 'firstName', 'lastName', 'phone', 'createdAt', 'status'],
+      attributes: ['id', 'email', 'firstName', 'lastName', 'phone', 'role', 'createdAt', 'status'],
       order: [['createdAt', 'ASC']]
     });
 
@@ -366,7 +366,7 @@ getActiveEmployees = catchAsync(async (req: Request, res: Response) => {
         return res.error('Employee not found', 404, 'USER_NOT_FOUND');
       }
 
-      if (employee.role !== 'EMPLOYEE') {
+      if (employee.role !== 'EMPLOYEE' && employee.role !== 'PROVIDER') {
         await transaction.rollback();
         return res.error('User is not an employee', 400, 'INVALID_ROLE');
       }
