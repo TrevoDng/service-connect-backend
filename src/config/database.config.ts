@@ -1,6 +1,7 @@
 // src/config/database.config.ts
 import { Sequelize } from 'sequelize';
 import dotenv from 'dotenv';
+import { Booking, BookingPriceHistory } from '../models/index.js';
 
 dotenv.config();
 
@@ -36,7 +37,7 @@ const connectDB = async () => {
     console.log('✅ PostgreSQL connected successfully');
     
     // Import models AFTER connection to avoid circular deps
-    const { User, SecretCode, AuditLog } = await import('../models/index.js');
+    const { User, SecretCode, AuditLog, Booking, BookingPriceHistory } = await import('../models/index.js');
     
     // Setup associations (without firebase)
     User.hasMany(SecretCode, { 
@@ -67,6 +68,14 @@ const connectDB = async () => {
     
     AuditLog.belongsTo(User, { 
       foreignKey: 'userId' 
+    });
+
+    Booking.hasMany(BookingPriceHistory, {
+      as: 'priceHistory',
+      foreignKey: 'bookingId',
+    });
+    BookingPriceHistory.belongsTo(Booking, {
+      foreignKey: 'bookingId',
     });
     
     // Sync models

@@ -48,6 +48,9 @@ export interface BookingAttributes {
   consultationNotes?: string;
   consultationPhotos: string[];
   siteVisited: boolean;
+  finalPrice?: number;
+  pendingCounterParty?: 'CLIENT' | 'PROVIDER';
+  holdFirm: boolean;
 }
 
 export interface BookingCreationAttributes extends Optional<
@@ -65,6 +68,9 @@ export interface BookingCreationAttributes extends Optional<
   | 'consultationNotes'
   | 'consultationPhotos'
   | 'siteVisited'
+  | 'finalPrice'
+  | 'pendingCounterParty'
+  | 'holdFirm'
 > {}
 
 class Booking
@@ -94,6 +100,9 @@ class Booking
   declare consultationNotes?: string;
   declare consultationPhotos: string[];
   declare siteVisited: boolean;
+  declare finalPrice?: number;
+  declare pendingCounterParty?: 'CLIENT' | 'PROVIDER';
+  declare holdFirm: boolean;
   declare readonly createdAt: Date;
   declare readonly updatedAt: Date;
 }
@@ -218,6 +227,22 @@ Booking.init(
       allowNull: false,
       defaultValue: false,
       field: 'site_visited',
+    },
+    finalPrice: {
+      type: DataTypes.DECIMAL(10, 2),
+      allowNull: true,
+      field: 'final_price',
+    },
+    pendingCounterParty: {
+      type: DataTypes.ENUM('CLIENT', 'PROVIDER'),
+      allowNull: true,
+      field: 'pending_counter_party',
+    },
+    holdFirm: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+      field: 'hold_firm',
     },
   },
   {

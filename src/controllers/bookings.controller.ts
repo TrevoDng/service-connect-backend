@@ -5,6 +5,7 @@ import Booking from '../models/Booking';
 import sequelize from '../config/database.config';
 import catchAsync from '../utils/catchAsync';
 import logger from '../utils/logger';
+import { BookingPriceHistory } from '../models';
 
 // ============================================================
 // MAPPER: Sequelize model → frontend Booking shape (Phase 1 only)
@@ -39,10 +40,10 @@ function toApi(b: Booking) {
     consultationPhotos: b.consultationPhotos ?? [],
     siteVisited: b.siteVisited ?? false,
     // ---------- Phase 3 placeholders (still undefined) ----------
-    finalPrice: undefined,
-    priceHistory: [],
-    pendingCounterParty: undefined,
-    holdFirm: undefined,
+    finalPrice: b.finalPrice !== null && b.finalPrice !== undefined ? Number(b.finalPrice) : undefined,
+    priceHistory: (b as any).priceHistory ?? [],
+    pendingCounterParty: b.pendingCounterParty ?? undefined,
+    holdFirm: b.holdFirm ?? false,
     clientSharedFields: {
       displayName: true,
       phone: false,
@@ -54,6 +55,13 @@ function toApi(b: Booking) {
     consultationClockConfirmedByClient: undefined,
   };
 }
+
+// Helper to include price history relation
+const withHistory = {
+  model: BookingPriceHistory,
+  as: 'priceHistory',
+  order: [['createdAt', 'ASC']] as any,
+};
 
 // ============================================================
 // GENERATE requestRef via Postgres sequence
@@ -129,10 +137,11 @@ export const getProviderBookings = catchAsync(async (req: Request, res: Response
   const user = req.user;
   if (!user) return res.error('Not authenticated', 401, 'UNAUTHORIZED');
 
-  const bookings = await Booking.findAll({
-    where: { providerId: user.id },
-    order: [['updatedAt', 'DESC']],
-  });
+    const bookings = await Booking.findAll({
+      where: { providerId: user.id },
+      include: [withHistory],
+      order: [['updatedAt', 'DESC']],
+    });
 
   res.success({ bookings: bookings.map(toApi) }, 'Bookings retrieved successfully');
 });
@@ -142,10 +151,11 @@ export const getClientBookings = catchAsync(async (req: Request, res: Response) 
   const user = req.user;
   if (!user) return res.error('Not authenticated', 401, 'UNAUTHORIZED');
 
-  const bookings = await Booking.findAll({
-    where: { clientId: user.id },
-    order: [['updatedAt', 'DESC']],
-  });
+    const bookings = await Booking.findAll({
+      where: { clientId: user.id },
+      include: [withHistory],
+      order: [['updatedAt', 'DESC']],
+    });
 
   res.success({ bookings: bookings.map(toApi) }, 'Bookings retrieved successfully');
 });
@@ -158,12 +168,11 @@ export const getProviderBookingById = catchAsync(async (req: Request, res: Respo
   const idParam = req.params.id;
   const id = Array.isArray(idParam) ? idParam[0] : idParam;
 
-  const booking = await Booking.findByPk(id);
-  if (!booking) return res.error('Booking not found', 404, 'BOOKING_NOT_FOUND');
-  if (booking.providerId !== user.id) {
-    return res.error('Forbidden', 403, 'FORBIDDEN');
+    const booking = await Booking.findByPk(id, { include: [withHistory] });
+      if (!booking) return res.error('Booking not found', 404, 'BOOKING_NOT_FOUND');
+      if (booking.providerId !== user.id) {
+      return res.error('Forbidden', 403, 'FORBIDDEN');
   }
-
   res.success({ booking: toApi(booking) }, 'Booking retrieved');
 });
 
@@ -386,4 +395,283 @@ export const submitConsultation = catchAsync(async (req: Request, res: Response)
   logger.info(`Consultation submitted for ${booking.requestRef} by provider ${user.email}`);
 
   res.success({ booking: toApi(booking) }, 'Consultation submitted successfully');
+});
+
+// ==================== PROPOSE FINAL PRICE (PROVIDER) ====================
+export const proposeFinalPrice = catchAsync(async (req: Request, res: Response) => {
+  const user = req.user;
+  if (!user) return res.error('Not authenticated', 401, 'UNAUTHORIZED');
+  if (user.role !== 'PROVIDER') {
+    return res.error('Only providers can propose a final price', 403, 'FORBIDDEN');
+  }
+
+  const idParam = req.params.id;
+  const id = Array.isArray(idParam) ? idParam[0] : idParam;
+  const { amount, note } = req.body;
+
+  const num = Number(amount);
+  if (!Number.isFinite(num) || num <= 0) {
+    return res.error('amount must be a positive number', 400, 'INVALID_AMOUNT');
+  }
+
+  const booking = await Booking.findByPk(id);
+  if (!booking) return res.error('Booking not found', 404, 'BOOKING_NOT_FOUND');
+  if (booking.providerId !== user.id) {
+    return res.error('You can only propose prices on your own bookings', 403, 'FORBIDDEN');
+  }
+  if (booking.status !== 'evaluated') {
+    return res.error(`Cannot propose price for booking with status ${booking.status}`, 400, 'INVALID_STATUS');
+  }
+
+  const transaction = await sequelize.transaction();
+  try {
+    await booking.update({
+      status: 'price_proposed',
+      finalPrice: num,
+      pendingCounterParty: 'CLIENT',
+      holdFirm: false,
+    }, { transaction });
+
+    await BookingPriceHistory.create({
+      bookingId: booking.id,
+      stage: 'final_proposed',
+      amount: num,
+      byUserId: user.id,
+      note: note ? String(note).trim() : undefined,
+    }, { transaction });
+
+    await transaction.commit();
+  } catch (err) {
+    await transaction.rollback();
+    throw err;
+  }
+
+  const fresh = await Booking.findByPk(id, { include: [withHistory] });
+  logger.info(`Provider ${user.email} proposed R${num} on ${booking.requestRef}`);
+  res.success({ booking: toApi(fresh!) }, 'Final price proposed');
+});
+
+// ==================== ACCEPT FINAL PRICE (CLIENT) ====================
+export const acceptFinalPrice = catchAsync(async (req: Request, res: Response) => {
+  const user = req.user;
+  if (!user) return res.error('Not authenticated', 401, 'UNAUTHORIZED');
+  if (user.role !== 'CLIENT') {
+    return res.error('Only clients can accept final prices', 403, 'FORBIDDEN');
+  }
+
+  const idParam = req.params.id;
+  const id = Array.isArray(idParam) ? idParam[0] : idParam;
+
+  const booking = await Booking.findByPk(id);
+  if (!booking) return res.error('Booking not found', 404, 'BOOKING_NOT_FOUND');
+  if (booking.clientId !== user.id) {
+    return res.error('You can only accept prices on your own bookings', 403, 'FORBIDDEN');
+  }
+  if (booking.status !== 'price_proposed') {
+    return res.error(`Cannot accept price for booking with status ${booking.status}`, 400, 'INVALID_STATUS');
+  }
+  if (booking.pendingCounterParty !== 'CLIENT') {
+    return res.error('Not your turn to respond', 400, 'NOT_YOUR_TURN');
+  }
+
+  const transaction = await sequelize.transaction();
+  try {
+    await booking.update({
+      status: 'price_agreed',
+      pendingCounterParty: undefined,
+      holdFirm: false,
+    }, { transaction });
+
+    await BookingPriceHistory.create({
+      bookingId: booking.id,
+      stage: 'final_agreed',
+      amount: Number(booking.finalPrice ?? 0),
+      byUserId: user.id,
+      note: 'Client accepted the final price.',
+    }, { transaction });
+
+    await transaction.commit();
+  } catch (err) {
+    await transaction.rollback();
+    throw err;
+  }
+
+  const fresh = await Booking.findByPk(id, { include: [withHistory] });
+  logger.info(`Client ${user.email} accepted price on ${booking.requestRef}`);
+  res.success({ booking: toApi(fresh!) }, 'Price agreed');
+});
+
+// ==================== COUNTER PRICE (CLIENT) ====================
+export const counterPrice = catchAsync(async (req: Request, res: Response) => {
+  const user = req.user;
+  if (!user) return res.error('Not authenticated', 401, 'UNAUTHORIZED');
+  if (user.role !== 'CLIENT') {
+    return res.error('Only clients can counter prices', 403, 'FORBIDDEN');
+  }
+
+  const idParam = req.params.id;
+  const id = Array.isArray(idParam) ? idParam[0] : idParam;
+  const { amount, note } = req.body;
+
+  const num = Number(amount);
+  if (!Number.isFinite(num) || num <= 0) {
+    return res.error('amount must be a positive number', 400, 'INVALID_AMOUNT');
+  }
+
+  const booking = await Booking.findByPk(id);
+  if (!booking) return res.error('Booking not found', 404, 'BOOKING_NOT_FOUND');
+  if (booking.clientId !== user.id) {
+    return res.error('You can only counter prices on your own bookings', 403, 'FORBIDDEN');
+  }
+  if (booking.status !== 'price_proposed') {
+    return res.error(`Cannot counter price for booking with status ${booking.status}`, 400, 'INVALID_STATUS');
+  }
+  if (booking.pendingCounterParty !== 'CLIENT') {
+    return res.error('Not your turn to respond', 400, 'NOT_YOUR_TURN');
+  }
+
+  const transaction = await sequelize.transaction();
+  try {
+    await booking.update({
+      finalPrice: num,
+      pendingCounterParty: 'PROVIDER',
+      holdFirm: false,
+    }, { transaction });
+
+    await BookingPriceHistory.create({
+      bookingId: booking.id,
+      stage: 'final_proposed',
+      amount: num,
+      byUserId: user.id,
+      note: note ? `Client counter: ${String(note).trim()}` : 'Client counter.',
+    }, { transaction });
+
+    await transaction.commit();
+  } catch (err) {
+    await transaction.rollback();
+    throw err;
+  }
+
+  const fresh = await Booking.findByPk(id, { include: [withHistory] });
+  logger.info(`Client ${user.email} countered with R${num} on ${booking.requestRef}`);
+  res.success({ booking: toApi(fresh!) }, 'Counter sent');
+});
+
+// ==================== ACCEPT COUNTER (PROVIDER) ====================
+export const acceptCounter = catchAsync(async (req: Request, res: Response) => {
+  const user = req.user;
+  if (!user) return res.error('Not authenticated', 401, 'UNAUTHORIZED');
+  if (user.role !== 'PROVIDER') {
+    return res.error('Only providers can accept counters', 403, 'FORBIDDEN');
+  }
+
+  const idParam = req.params.id;
+  const id = Array.isArray(idParam) ? idParam[0] : idParam;
+
+  const booking = await Booking.findByPk(id);
+  if (!booking) return res.error('Booking not found', 404, 'BOOKING_NOT_FOUND');
+  if (booking.providerId !== user.id) {
+    return res.error('You can only accept counters on your own bookings', 403, 'FORBIDDEN');
+  }
+  if (booking.status !== 'price_proposed') {
+    return res.error(`Cannot accept counter for booking with status ${booking.status}`, 400, 'INVALID_STATUS');
+  }
+  if (booking.pendingCounterParty !== 'PROVIDER') {
+    return res.error('Not your turn to respond', 400, 'NOT_YOUR_TURN');
+  }
+
+  const transaction = await sequelize.transaction();
+  try {
+    await booking.update({
+      status: 'price_agreed',
+      pendingCounterParty: undefined,
+      holdFirm: false,
+    }, { transaction });
+
+    await BookingPriceHistory.create({
+      bookingId: booking.id,
+      stage: 'final_agreed',
+      amount: Number(booking.finalPrice ?? 0),
+      byUserId: user.id,
+      note: 'Provider accepted the client counter.',
+    }, { transaction });
+
+    await transaction.commit();
+  } catch (err) {
+    await transaction.rollback();
+    throw err;
+  }
+
+  const fresh = await Booking.findByPk(id, { include: [withHistory] });
+  logger.info(`Provider ${user.email} accepted counter on ${booking.requestRef}`);
+  res.success({ booking: toApi(fresh!) }, 'Counter accepted');
+});
+
+// ==================== HOLD FIRM (PROVIDER) ====================
+export const holdFirm = catchAsync(async (req: Request, res: Response) => {
+  const user = req.user;
+  if (!user) return res.error('Not authenticated', 401, 'UNAUTHORIZED');
+  if (user.role !== 'PROVIDER') {
+    return res.error('Only providers can hold firm', 403, 'FORBIDDEN');
+  }
+
+  const idParam = req.params.id;
+  const id = Array.isArray(idParam) ? idParam[0] : idParam;
+
+  const booking = await Booking.findByPk(id);
+  if (!booking) return res.error('Booking not found', 404, 'BOOKING_NOT_FOUND');
+  if (booking.providerId !== user.id) {
+    return res.error('You can only hold firm on your own bookings', 403, 'FORBIDDEN');
+  }
+  if (booking.status !== 'price_proposed') {
+    return res.error(`Cannot hold firm for booking with status ${booking.status}`, 400, 'INVALID_STATUS');
+  }
+  if (booking.pendingCounterParty !== 'PROVIDER') {
+    return res.error('Not your turn to respond', 400, 'NOT_YOUR_TURN');
+  }
+
+  await booking.update({
+    pendingCounterParty: 'CLIENT',
+    holdFirm: true,
+  });
+
+  const fresh = await Booking.findByPk(id, { include: [withHistory] });
+  logger.info(`Provider ${user.email} held firm on ${booking.requestRef}`);
+  res.success({ booking: toApi(fresh!) }, 'Held firm');
+});
+
+// ==================== DISPUTE PRICE (EITHER PARTY) ====================
+export const disputePrice = catchAsync(async (req: Request, res: Response) => {
+  const user = req.user;
+  if (!user) return res.error('Not authenticated', 401, 'UNAUTHORIZED');
+  if (user.role !== 'CLIENT' && user.role !== 'PROVIDER') {
+    return res.error('Only clients and providers can dispute prices', 403, 'FORBIDDEN');
+  }
+
+  const idParam = req.params.id;
+  const id = Array.isArray(idParam) ? idParam[0] : idParam;
+  const { reason } = req.body;
+
+  if (!reason || typeof reason !== 'string' || !reason.trim()) {
+    return res.error('reason is required', 400, 'MISSING_REASON');
+  }
+
+  const booking = await Booking.findByPk(id);
+  if (!booking) return res.error('Booking not found', 404, 'BOOKING_NOT_FOUND');
+  if (booking.clientId !== user.id && booking.providerId !== user.id) {
+    return res.error('You can only dispute prices on your own bookings', 403, 'FORBIDDEN');
+  }
+  if (booking.status !== 'price_proposed') {
+    return res.error(`Cannot dispute price for booking with status ${booking.status}`, 400, 'INVALID_STATUS');
+  }
+
+  await booking.update({
+    status: 'price_disputed',
+    pendingCounterParty: undefined,
+    holdFirm: false,
+  });
+
+  const fresh = await Booking.findByPk(id, { include: [withHistory] });
+  logger.info(`${user.role} ${user.email} disputed price on ${booking.requestRef}: ${reason}`);
+  res.success({ booking: toApi(fresh!) }, 'Price disputed');
 });
