@@ -29,11 +29,7 @@ export const register = catchAsync(async (req: Request, res: Response) => {
     password, 
     secretCode, 
     phone, 
-    rememberMe, 
-    serviceType,
-    companyName,
-    registrationNumber,
-    role: requestedRole
+    rememberMe 
   } = req.body;
   
   const ipAddress = req.ip;
@@ -53,7 +49,7 @@ export const register = catchAsync(async (req: Request, res: Response) => {
       return res.error('Email already registered', 409, 'EMAIL_EXISTS');
     }
     
-    let role: 'CLIENT' | 'EMPLOYEE' | 'PROVIDER' = 'CLIENT';
+    let role: 'CLIENT' | 'EMPLOYEE' = 'CLIENT';
     let status: 'pending_email' | 'active' = 'active';
     let requiresEmailVerification = false;
     let requiresAdminApproval = false;
@@ -118,28 +114,7 @@ export const register = catchAsync(async (req: Request, res: Response) => {
       status = 'pending_email';
       requiresEmailVerification = true;
       requiresAdminApproval = true;
-    } else if (requestedRole === 'PROVIDER') {
-  if (!serviceType || !companyName || !registrationNumber) {
-    await transaction.rollback();
-    return res.error(
-      'serviceType, companyName, and registrationNumber are required for providers',
-      400,
-      'MISSING_PROVIDER_FIELDS'
-    );
-  }
-
-  role = 'PROVIDER';
-  status = 'pending_email';
-  requiresEmailVerification = true;
-  requiresAdminApproval = true;
-} else if (requestedRole && requestedRole !== 'CLIENT') {
-  await transaction.rollback();
-  return res.error(
-    'Invalid role. Allowed values: CLIENT, PROVIDER (EMPLOYEE requires a secretCode).',
-    400,
-    'INVALID_ROLE'
-  );
-}
+    }
 
     const frontendUrl = req.frontendUrl || process.env.FRONTEND_URL || 'http://localhost:3000';
     
@@ -147,7 +122,7 @@ export const register = catchAsync(async (req: Request, res: Response) => {
     let verificationToken = undefined;
     let tokenExpires = undefined;
     
-    if (role === 'EMPLOYEE' || role === 'PROVIDER') {
+    if (role === 'EMPLOYEE') {
       verificationToken = generateVerificationToken();
       tokenExpires = getTokenExpiry(24);
     }
@@ -166,9 +141,6 @@ export const register = catchAsync(async (req: Request, res: Response) => {
       verificationToken: verificationToken,
       verificationTokenExpires: tokenExpires,
       secretCode: validatedSecretCode,
-      serviceType: role === 'PROVIDER' ? serviceType : undefined,
-      companyName: role === 'PROVIDER' ? companyName : undefined,
-      registrationNumber: role === 'PROVIDER' ? registrationNumber : undefined,
     }, { transaction });
 
     // If we have a secret code, update it with the user ID
@@ -213,10 +185,7 @@ export const register = catchAsync(async (req: Request, res: Response) => {
         id: user.id,
         name: `${user.firstName} ${user.lastName}`,
         email: user.email,
-        role: user.role,
-	serviceType: user.serviceType,
-        companyName: user.companyName,
-        registrationNumber: user.registrationNumber,
+        role: user.role
       },
       requiresEmailVerification,
       requiresAdminApproval
@@ -261,7 +230,7 @@ export const login = catchAsync(async (req: Request, res: Response) => {
       return res.error('Customer account is not active. Please contact support.', 403, 'ACCOUNT_INACTIVE');
     }
 
-    if (user.role === 'EMPLOYEE' || user.role === 'PROVIDER') {
+    if (user.role === 'EMPLOYEE') {
       if (user.status === 'pending_email') {
         return res.error('Please verify your email before logging in.', 403, 'EMAIL_NOT_VERIFIED');
       }
@@ -303,12 +272,7 @@ export const login = catchAsync(async (req: Request, res: Response) => {
         firstName: user.firstName,
         lastName: user.lastName,
         email: user.email,
-        role: user.role,
-	phone: user.phone,
-        status: user.status,
-        serviceType: user.serviceType,
-        companyName: user.companyName,
-        registrationNumber: user.registrationNumber,
+        role: user.role
       }
     }, 'Login successful');
     
@@ -358,7 +322,7 @@ export const verifyEmail = catchAsync(async (req: Request, res: Response) => {
     let newStatus: 'pending_approval' | 'active';
     let message: string;
     
-    if (user.role === 'EMPLOYEE' || user.role === 'PROVIDER') {
+    if (user.role === 'EMPLOYEE') {
       newStatus = 'pending_approval';
       message = 'Email verified! Your registration is now pending admin approval. You will be notified once approved.';
     } else {

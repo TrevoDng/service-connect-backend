@@ -7,6 +7,8 @@ import dotenv from 'dotenv';
 import { detectFrontendUrl } from './middleware/url.middleware';
 import authRoutes from './routes/auth.routes';
 import adminRoutes from './routes/admin.routes';
+import { providerRouter, servicesRouter } from './routes/services.routes';
+import { providerBookingsRouter, clientBookingsRouter } from './routes/bookings.routes';
 import { responseMiddleware } from './middleware/response.middleware';
 import { connectDB, sequelize } from './config/database.config';
 
@@ -63,6 +65,10 @@ app.get('/api/health', async (req: Request, res: Response) => {
 // ============================================================
 app.use('/api/auth', detectFrontendUrl, authRoutes);
 app.use('/api/admin', detectFrontendUrl, adminRoutes);
+app.use('/api/provider', detectFrontendUrl, providerRouter);
+app.use('/api/services', detectFrontendUrl, servicesRouter);
+app.use('/api/provider', detectFrontendUrl, providerBookingsRouter);
+app.use('/api/bookings', detectFrontendUrl, clientBookingsRouter);
 
 // ============================================================
 // ✅ 5. Error Handling
