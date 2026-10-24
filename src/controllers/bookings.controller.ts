@@ -41,9 +41,17 @@ function toApi(b: Booking) {
     siteVisited: b.siteVisited ?? false,
     // ---------- Phase 3 placeholders (still undefined) ----------
     finalPrice: b.finalPrice !== null && b.finalPrice !== undefined ? Number(b.finalPrice) : undefined,
-    priceHistory: (b as any).priceHistory ?? [],
+    priceHistory: ((b as any).priceHistory ?? []).map((h: any) => ({
+      stage: h.stage,
+      amount: Number(h.amount),
+      at: h.createdAt instanceof Date ? h.createdAt.toISOString() : String(h.createdAt),
+      byUserId: h.byUserId,
+      note: h.note ?? undefined,
+})),
     pendingCounterParty: b.pendingCounterParty ?? undefined,
     holdFirm: b.holdFirm ?? false,
+    clientCounterCount: b.clientCounterCount ?? 0,
+    providerCounterCount: b.providerCounterCount ?? 0,
     clientSharedFields: {
       displayName: true,
       phone: false,
@@ -345,8 +353,8 @@ export const clockOutConsultation = catchAsync(async (req: Request, res: Respons
 
   await booking.update({
     consultationClockOut: new Date(),
-    consultationReferenceCode: undefined,
-    consultationReferenceExpiresAt: undefined,
+    consultationReferenceCode: null,
+    consultationReferenceExpiresAt: null,
   });
 
   logger.info(`Consultation clocked out for ${booking.requestRef} by provider ${user.email}`);
@@ -397,7 +405,7 @@ export const submitConsultation = catchAsync(async (req: Request, res: Response)
   res.success({ booking: toApi(booking) }, 'Consultation submitted successfully');
 });
 
-// ==================== PROPOSE FINAL PRICE (PROVIDER) ====================
+// ==================== PROPOSE / RE-PROPOSE FINAL PRICE (PROVIDER) ====================
 export const proposeFinalPrice = catchAsync(async (req: Request, res: Response) => {
   const user = req.user;
   if (!user) return res.error('Not authenticated', 401, 'UNAUTHORIZED');
@@ -419,26 +427,58 @@ export const proposeFinalPrice = catchAsync(async (req: Request, res: Response) 
   if (booking.providerId !== user.id) {
     return res.error('You can only propose prices on your own bookings', 403, 'FORBIDDEN');
   }
-  if (booking.status !== 'evaluated') {
-    return res.error(`Cannot propose price for booking with status ${booking.status}`, 400, 'INVALID_STATUS');
+
+  // Allowed in two cases:
+  //  1. First proposal (status 'evaluated')
+  //  2. Re-proposal (status 'price_proposed' AND it's the provider's turn)
+  const isFirstProposal = booking.status === 'evaluated';
+  const isReProposal =
+    booking.status === 'price_proposed' && booking.pendingCounterParty === 'PROVIDER';
+
+  if (!isFirstProposal && !isReProposal) {
+    return res.error(
+      `Cannot propose price for booking with status ${booking.status}`,
+      400,
+      'INVALID_STATUS'
+    );
   }
+
+  if (booking.holdFirm === true) {
+    return res.error('Hold firm is active — no further counters allowed', 400, 'HOLD_FIRM_ACTIVE');
+  }
+
+  // Counter limit — only re-proposals count as counters
+  if (isReProposal && booking.providerCounterCount >= 3) {
+    return res.error('Counter limit reached (3/3)', 400, 'COUNTER_LIMIT_REACHED');
+  }
+
+  const newProviderCounterCount = isReProposal
+    ? booking.providerCounterCount + 1
+    : booking.providerCounterCount;
 
   const transaction = await sequelize.transaction();
   try {
-    await booking.update({
-      status: 'price_proposed',
-      finalPrice: num,
-      pendingCounterParty: 'CLIENT',
-      holdFirm: false,
-    }, { transaction });
+    await booking.update(
+      {
+        status: 'price_proposed',
+        finalPrice: num,
+        pendingCounterParty: 'CLIENT',
+        holdFirm: false,
+        providerCounterCount: newProviderCounterCount,
+      },
+      { transaction }
+    );
 
-    await BookingPriceHistory.create({
-      bookingId: booking.id,
-      stage: 'final_proposed',
-      amount: num,
-      byUserId: user.id,
-      note: note ? String(note).trim() : undefined,
-    }, { transaction });
+    await BookingPriceHistory.create(
+      {
+        bookingId: booking.id,
+        stage: 'final_proposed',
+        amount: num,
+        byUserId: user.id,
+        note: note ? String(note).trim() : undefined,
+      },
+      { transaction }
+    );
 
     await transaction.commit();
   } catch (err) {
@@ -447,7 +487,9 @@ export const proposeFinalPrice = catchAsync(async (req: Request, res: Response) 
   }
 
   const fresh = await Booking.findByPk(id, { include: [withHistory] });
-  logger.info(`Provider ${user.email} proposed R${num} on ${booking.requestRef}`);
+  logger.info(
+    `Provider ${user.email} ${isReProposal ? 're-proposed' : 'proposed'} R${num} on ${booking.requestRef}`
+  );
   res.success({ booking: toApi(fresh!) }, 'Final price proposed');
 });
 
@@ -475,12 +517,11 @@ export const acceptFinalPrice = catchAsync(async (req: Request, res: Response) =
   }
 
   const transaction = await sequelize.transaction();
-  try {
-    await booking.update({
-      status: 'price_agreed',
-      pendingCounterParty: undefined,
-      holdFirm: false,
-    }, { transaction });
+    try {
+        booking.set('status', 'price_agreed');
+        booking.set('pendingCounterParty', null);
+        booking.set('holdFirm', false);
+    await booking.save({ transaction });
 
     await BookingPriceHistory.create({
       bookingId: booking.id,
@@ -529,22 +570,35 @@ export const counterPrice = catchAsync(async (req: Request, res: Response) => {
   if (booking.pendingCounterParty !== 'CLIENT') {
     return res.error('Not your turn to respond', 400, 'NOT_YOUR_TURN');
   }
+  if (booking.holdFirm === true) {
+    return res.error('Hold firm is active — no further counters allowed', 400, 'HOLD_FIRM_ACTIVE');
+  }
+  if (booking.clientCounterCount >= 3) {
+    return res.error('Counter limit reached (3/3)', 400, 'COUNTER_LIMIT_REACHED');
+  }
 
   const transaction = await sequelize.transaction();
   try {
-    await booking.update({
-      finalPrice: num,
-      pendingCounterParty: 'PROVIDER',
-      holdFirm: false,
-    }, { transaction });
+    await booking.update(
+      {
+        finalPrice: num,
+        pendingCounterParty: 'PROVIDER',
+        holdFirm: false,
+        clientCounterCount: booking.clientCounterCount + 1,
+      },
+      { transaction }
+    );
 
-    await BookingPriceHistory.create({
-      bookingId: booking.id,
-      stage: 'final_proposed',
-      amount: num,
-      byUserId: user.id,
-      note: note ? `Client counter: ${String(note).trim()}` : 'Client counter.',
-    }, { transaction });
+    await BookingPriceHistory.create(
+      {
+        bookingId: booking.id,
+        stage: 'final_proposed',
+        amount: num,
+        byUserId: user.id,
+        note: note ? `Client counter: ${String(note).trim()}` : 'Client counter.',
+      },
+      { transaction }
+    );
 
     await transaction.commit();
   } catch (err) {
@@ -582,11 +636,10 @@ export const acceptCounter = catchAsync(async (req: Request, res: Response) => {
 
   const transaction = await sequelize.transaction();
   try {
-    await booking.update({
-      status: 'price_agreed',
-      pendingCounterParty: undefined,
-      holdFirm: false,
-    }, { transaction });
+      booking.set('status', 'price_agreed');
+      booking.set('pendingCounterParty', null);
+      booking.set('holdFirm', false);
+      await booking.save({ transaction });
 
     await BookingPriceHistory.create({
       bookingId: booking.id,
@@ -607,12 +660,12 @@ export const acceptCounter = catchAsync(async (req: Request, res: Response) => {
   res.success({ booking: toApi(fresh!) }, 'Counter accepted');
 });
 
-// ==================== HOLD FIRM (PROVIDER) ====================
+// ==================== HOLD FIRM (EITHER PARTY) ====================
 export const holdFirm = catchAsync(async (req: Request, res: Response) => {
   const user = req.user;
   if (!user) return res.error('Not authenticated', 401, 'UNAUTHORIZED');
-  if (user.role !== 'PROVIDER') {
-    return res.error('Only providers can hold firm', 403, 'FORBIDDEN');
+  if (user.role !== 'CLIENT' && user.role !== 'PROVIDER') {
+    return res.error('Only clients and providers can hold firm', 403, 'FORBIDDEN');
   }
 
   const idParam = req.params.id;
@@ -620,23 +673,53 @@ export const holdFirm = catchAsync(async (req: Request, res: Response) => {
 
   const booking = await Booking.findByPk(id);
   if (!booking) return res.error('Booking not found', 404, 'BOOKING_NOT_FOUND');
-  if (booking.providerId !== user.id) {
+
+  const isClient = user.role === 'CLIENT';
+  if (isClient && booking.clientId !== user.id) {
+    return res.error('You can only hold firm on your own bookings', 403, 'FORBIDDEN');
+  }
+  if (!isClient && booking.providerId !== user.id) {
     return res.error('You can only hold firm on your own bookings', 403, 'FORBIDDEN');
   }
   if (booking.status !== 'price_proposed') {
     return res.error(`Cannot hold firm for booking with status ${booking.status}`, 400, 'INVALID_STATUS');
   }
-  if (booking.pendingCounterParty !== 'PROVIDER') {
+
+  const currentTurn = booking.pendingCounterParty;
+  if ((isClient && currentTurn !== 'CLIENT') || (!isClient && currentTurn !== 'PROVIDER')) {
     return res.error('Not your turn to respond', 400, 'NOT_YOUR_TURN');
   }
+  if (booking.holdFirm === true) {
+    return res.error('Hold firm is already active', 400, 'ALREADY_HOLDING');
+  }
+
+  // Find the holder's most recent proposal in price history
+  const holderId = isClient ? booking.clientId : booking.providerId;
+  const lastProposal = await BookingPriceHistory.findOne({
+    where: { bookingId: booking.id, byUserId: holderId, stage: 'final_proposed' },
+    order: [['createdAt', 'DESC']],
+  });
+
+  if (!lastProposal) {
+    return res.error(
+      'You must propose a price before holding firm',
+      400,
+      'NO_PROPOSAL_TO_HOLD'
+    );
+  }
+
+  const firmAmount = Number(lastProposal.amount);
 
   await booking.update({
-    pendingCounterParty: 'CLIENT',
+    pendingCounterParty: isClient ? 'PROVIDER' : 'CLIENT',
     holdFirm: true,
+    finalPrice: firmAmount,
   });
 
   const fresh = await Booking.findByPk(id, { include: [withHistory] });
-  logger.info(`Provider ${user.email} held firm on ${booking.requestRef}`);
+  logger.info(
+    `${user.role} ${user.email} held firm at R${firmAmount} on ${booking.requestRef}`
+  );
   res.success({ booking: toApi(fresh!) }, 'Held firm');
 });
 
@@ -665,11 +748,10 @@ export const disputePrice = catchAsync(async (req: Request, res: Response) => {
     return res.error(`Cannot dispute price for booking with status ${booking.status}`, 400, 'INVALID_STATUS');
   }
 
-  await booking.update({
-    status: 'price_disputed',
-    pendingCounterParty: undefined,
-    holdFirm: false,
-  });
+    booking.set('status', 'price_disputed');
+    booking.set('pendingCounterParty', null);
+    booking.set('holdFirm', false);
+    await booking.save();
 
   const fresh = await Booking.findByPk(id, { include: [withHistory] });
   logger.info(`${user.role} ${user.email} disputed price on ${booking.requestRef}: ${reason}`);

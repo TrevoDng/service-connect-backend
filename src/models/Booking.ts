@@ -43,14 +43,16 @@ export interface BookingAttributes {
   consultationPaidAt?: Date;
   consultationClockIn?: Date;
   consultationClockOut?: Date;
-  consultationReferenceCode?: string;
-  consultationReferenceExpiresAt?: Date;
+  consultationReferenceCode?: string | null;
+  consultationReferenceExpiresAt?: Date | null;
   consultationNotes?: string;
   consultationPhotos: string[];
   siteVisited: boolean;
   finalPrice?: number;
-  pendingCounterParty?: 'CLIENT' | 'PROVIDER';
+  pendingCounterParty?: 'CLIENT' | 'PROVIDER' | null;
   holdFirm: boolean;
+  clientCounterCount: number;
+  providerCounterCount: number;
 }
 
 export interface BookingCreationAttributes extends Optional<
@@ -71,6 +73,8 @@ export interface BookingCreationAttributes extends Optional<
   | 'finalPrice'
   | 'pendingCounterParty'
   | 'holdFirm'
+  | 'clientCounterCount'
+  | 'providerCounterCount'
 > {}
 
 class Booking
@@ -95,14 +99,16 @@ class Booking
   declare consultationPaidAt?: Date;
   declare consultationClockIn?: Date;
   declare consultationClockOut?: Date;
-  declare consultationReferenceCode?: string;
-  declare consultationReferenceExpiresAt?: Date;
+  declare consultationReferenceCode?: string | null;
+  declare consultationReferenceExpiresAt?: Date | null;
   declare consultationNotes?: string;
   declare consultationPhotos: string[];
   declare siteVisited: boolean;
   declare finalPrice?: number;
-  declare pendingCounterParty?: 'CLIENT' | 'PROVIDER';
+  declare pendingCounterParty?: 'CLIENT' | 'PROVIDER' | null;
   declare holdFirm: boolean;
+  declare clientCounterCount: number;
+  declare providerCounterCount: number;
   declare readonly createdAt: Date;
   declare readonly updatedAt: Date;
 }
@@ -243,6 +249,18 @@ Booking.init(
       allowNull: false,
       defaultValue: false,
       field: 'hold_firm',
+    },
+    clientCounterCount: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0,
+      field: 'client_counter_count',
+    },
+    providerCounterCount: {
+      type: DataTypes.INTEGER,
+      allowNull: false,
+      defaultValue: 0,
+      field: 'provider_counter_count',
     },
   },
   {

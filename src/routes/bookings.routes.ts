@@ -54,4 +54,5 @@ clientBookingsRouter.get('/', getClientBookings);
 clientBookingsRouter.patch('/:id/pay-consultation', payConsultation);
 clientBookingsRouter.patch('/:id/accept-price', acceptFinalPrice);
 clientBookingsRouter.patch('/:id/counter-price', counterPrice);
+clientBookingsRouter.patch('/:id/hold-firm', holdFirm);
 clientBookingsRouter.patch('/:id/dispute-price', disputePrice);
