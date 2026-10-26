@@ -11,6 +11,7 @@ import { providerRouter, servicesRouter } from './routes/services.routes';
 import { providerBookingsRouter, clientBookingsRouter } from './routes/bookings.routes';
 import { responseMiddleware } from './middleware/response.middleware';
 import { connectDB, sequelize } from './config/database.config';
+import { clientWorkSessionsRouter, providerWorkSessionsRouter } from './routes/workSessions.routes';
 
 dotenv.config();
 
@@ -65,10 +66,12 @@ app.get('/api/health', async (req: Request, res: Response) => {
 // ============================================================
 app.use('/api/auth', detectFrontendUrl, authRoutes);
 app.use('/api/admin', detectFrontendUrl, adminRoutes);
-app.use('/api/provider', detectFrontendUrl, providerRouter);
 app.use('/api/services', detectFrontendUrl, servicesRouter);
+app.use('/api/provider', detectFrontendUrl, providerRouter);
 app.use('/api/provider', detectFrontendUrl, providerBookingsRouter);
 app.use('/api/bookings', detectFrontendUrl, clientBookingsRouter);
+app.use('/api/provider/bookings', detectFrontendUrl, providerWorkSessionsRouter);
+app.use('/api/bookings', detectFrontendUrl, clientWorkSessionsRouter);
 
 // ============================================================
 // ✅ 5. Error Handling

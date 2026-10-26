@@ -53,6 +53,7 @@ export interface BookingAttributes {
   holdFirm: boolean;
   clientCounterCount: number;
   providerCounterCount: number;
+  workSessionId?: string | null;
 }
 
 export interface BookingCreationAttributes extends Optional<
@@ -75,6 +76,7 @@ export interface BookingCreationAttributes extends Optional<
   | 'holdFirm'
   | 'clientCounterCount'
   | 'providerCounterCount'
+  | 'workSessionId'
 > {}
 
 class Booking
@@ -111,6 +113,7 @@ class Booking
   declare providerCounterCount: number;
   declare readonly createdAt: Date;
   declare readonly updatedAt: Date;
+  declare workSessionId?: string | null;
 }
 
 Booking.init(
@@ -261,6 +264,11 @@ Booking.init(
       allowNull: false,
       defaultValue: 0,
       field: 'provider_counter_count',
+    },
+    workSessionId: {
+      type: DataTypes.UUID,
+      allowNull: true,
+      field: 'work_session_id',
     },
   },
   {

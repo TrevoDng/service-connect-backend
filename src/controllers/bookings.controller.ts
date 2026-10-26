@@ -59,7 +59,7 @@ function toApi(b: Booking) {
       gateCode: false,
       specialInstructions: false,
     },
-    workSessionId: undefined,
+    workSessionId: b.workSessionId ?? undefined,
     consultationClockConfirmedByClient: undefined,
   };
 }

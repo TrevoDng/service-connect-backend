@@ -5,6 +5,7 @@ import AuditLog from './AuditLog';
 import Service from './Service';
 import Booking from './Booking';
 import BookingPriceHistory from './BookingPriceHistory';
+import WorkSession from './WorkSession';
 
 export {
   sequelize,
@@ -14,4 +15,5 @@ export {
   Service,
   Booking,
   BookingPriceHistory,
+  WorkSession,
 };
