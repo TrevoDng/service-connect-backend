@@ -6,6 +6,19 @@ import sequelize from '../config/database.config';
 import catchAsync from '../utils/catchAsync';
 import logger from '../utils/logger';
 import { BookingPriceHistory } from '../models';
+import { createNotification } from './notifications.controller';
+
+// Helper: fire-and-forget notification (never blocks the main flow)
+function fireNotification(input: Parameters<typeof createNotification>[0]): void {
+  createNotification(input).catch((err) =>
+    logger.error('Failed to create notification', err)
+  );
+}
+
+// Helper: get display name from user
+function displayNameOf(u: { firstName?: string; lastName?: string }): string {
+  return `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || 'User';
+}
 
 // ============================================================
 // MAPPER: Sequelize model → frontend Booking shape (Phase 1 only)
@@ -135,6 +148,18 @@ export const createBooking = catchAsync(async (req: Request, res: Response) => {
     consultationFee: 0,
   });
 
+    fireNotification({
+      userId: booking.providerId,
+      type: 'booking_requested',
+      priority: 'high',
+      title: 'New booking request',
+      message: `${displayNameOf(user)} requested ${booking.serviceTitle}. Suggested price: R${price}.`,
+      linkTo: '/provider/dashboard?tab=requests',
+      actorId: user.id,
+      actorDisplayName: displayNameOf(user),
+      bookingId: booking.id,
+  });
+
   logger.info(`Booking ${booking.requestRef} created by client ${user.email}`);
 
   res.status(201).success({ booking: toApi(booking) }, 'Booking created successfully');
@@ -212,6 +237,18 @@ export const acceptBooking = catchAsync(async (req: Request, res: Response) => {
 
   await booking.update({ status: 'accepted', consultationFee: fee });
 
+  fireNotification({
+  userId: booking.clientId,
+  type: 'booking_accepted',
+  priority: 'high',
+  title: 'Request accepted',
+  message: `${displayNameOf(user)} accepted your request for ${booking.serviceTitle}. Pay the consultation fee of R${fee} to schedule the site visit.`,
+  linkTo: '/client/dashboard?tab=requests',
+  actorId: user.id,
+  actorDisplayName: displayNameOf(user),
+  bookingId: booking.id,
+});
+
   logger.info(`Booking ${booking.requestRef} accepted by provider ${user.email}`);
 
   res.success({ booking: toApi(booking) }, 'Booking accepted');
@@ -243,6 +280,18 @@ export const declineBooking = catchAsync(async (req: Request, res: Response) => 
     'Unable to take this job at the moment. Best of luck finding another provider.';
 
   await booking.update({ status: 'declined', declineReason: trimmed });
+
+  fireNotification({
+  userId: booking.clientId,
+  type: 'booking_declined',
+  priority: 'normal',
+  title: 'Request declined',
+  message: `${displayNameOf(user)} declined your request for ${booking.serviceTitle}. Reason: ${trimmed}`,
+  linkTo: '/client/dashboard?tab=requests',
+  actorId: user.id,
+  actorDisplayName: displayNameOf(user),
+  bookingId: booking.id,
+});
 
   logger.info(`Booking ${booking.requestRef} declined by provider ${user.email}`);
 
@@ -280,6 +329,18 @@ export const payConsultation = catchAsync(async (req: Request, res: Response) =>
     status: 'consultation_paid',
     consultationPaidAt: new Date(),
   });
+
+  fireNotification({
+  userId: booking.providerId,
+  type: 'consultation_paid',
+  priority: 'high',
+  title: 'Consultation fee received',
+  message: `${displayNameOf(user)} paid the R${booking.consultationFee} consultation fee for ${booking.serviceTitle}. You can now schedule the site visit.`,
+  linkTo: '/provider/dashboard?tab=requests',
+  actorId: user.id,
+  actorDisplayName: displayNameOf(user),
+  bookingId: booking.id,
+});
 
   logger.info(`Consultation fee paid for booking ${booking.requestRef} by client ${user.email}`);
 
@@ -319,6 +380,18 @@ export const clockInConsultation = catchAsync(async (req: Request, res: Response
     consultationReferenceCode: String(referenceCode),
     consultationReferenceExpiresAt: new Date(expiresAt),
   });
+
+  fireNotification({
+  userId: booking.clientId,
+  type: 'clock_in',
+  priority: 'high',
+  title: 'Provider at your gate',
+  message: `${displayNameOf(user)} has arrived for the ${booking.serviceTitle} consultation. Reference code: ${referenceCode}. Confirm only if it matches.`,
+  linkTo: '/client/dashboard?tab=requests',
+  actorId: user.id,
+  actorDisplayName: displayNameOf(user),
+  bookingId: booking.id,
+});
 
   logger.info(`Consultation clocked in for ${booking.requestRef} by provider ${user.email}`);
 
@@ -399,6 +472,18 @@ export const submitConsultation = catchAsync(async (req: Request, res: Response)
     consultationNotes: notes.trim(),
     consultationPhotos: photos,
   });
+
+  fireNotification({
+  userId: booking.clientId,
+  type: 'consultation_completed',
+  priority: 'normal',
+  title: 'Consultation complete',
+  message: `${displayNameOf(user)} finished the site visit for ${booking.serviceTitle}. Photos and findings are ready for you to review.`,
+  linkTo: '/client/dashboard?tab=requests',
+  actorId: user.id,
+  actorDisplayName: displayNameOf(user),
+  bookingId: booking.id,
+});
 
   logger.info(`Consultation submitted for ${booking.requestRef} by provider ${user.email}`);
 
@@ -481,6 +566,19 @@ export const proposeFinalPrice = catchAsync(async (req: Request, res: Response) 
     );
 
     await transaction.commit();
+
+    fireNotification({
+      userId: booking.clientId,
+      type: 'price_proposed',
+      priority: 'high',
+      title: isReProposal ? 'New final price proposed' : 'Final price proposed',
+      message: `${displayNameOf(user)} proposed a final price of R${num} for ${booking.serviceTitle}. Review and respond.`,
+      linkTo: '/client/dashboard?tab=requests',
+      actorId: user.id,
+      actorDisplayName: displayNameOf(user),
+      bookingId: booking.id,
+    });
+
   } catch (err) {
     await transaction.rollback();
     throw err;
@@ -532,6 +630,19 @@ export const acceptFinalPrice = catchAsync(async (req: Request, res: Response) =
     }, { transaction });
 
     await transaction.commit();
+
+    fireNotification({
+      userId: booking.providerId,
+      type: 'price_agreed',
+      priority: 'high',
+      title: 'Price agreed',
+      message: `${displayNameOf(user)} accepted your final price of R${booking.finalPrice ?? booking.suggestedPrice} for ${booking.serviceTitle}. You can start the job.`,
+      linkTo: '/provider/dashboard?tab=requests',
+      actorId: user.id,
+      actorDisplayName: displayNameOf(user),
+      bookingId: booking.id,
+    });
+
   } catch (err) {
     await transaction.rollback();
     throw err;
@@ -601,6 +712,19 @@ export const counterPrice = catchAsync(async (req: Request, res: Response) => {
     );
 
     await transaction.commit();
+
+    fireNotification({
+      userId: booking.providerId,
+      type: 'price_proposed',
+      priority: 'high',
+      title: 'Client countered your price',
+      message: `${displayNameOf(user)} countered with R${num} for ${booking.serviceTitle}. Accept their counter or hold firm.`,
+      linkTo: '/provider/dashboard?tab=requests',
+      actorId: user.id,
+      actorDisplayName: displayNameOf(user),
+      bookingId: booking.id,
+    });
+
   } catch (err) {
     await transaction.rollback();
     throw err;
@@ -650,6 +774,19 @@ export const acceptCounter = catchAsync(async (req: Request, res: Response) => {
     }, { transaction });
 
     await transaction.commit();
+
+    fireNotification({
+      userId: booking.clientId,
+      type: 'price_agreed',
+      priority: 'high',
+      title: 'Your counter was accepted',
+      message: `${displayNameOf(user)} accepted your counter of R${booking.finalPrice ?? 0} for ${booking.serviceTitle}. They'll start soon.`,
+      linkTo: '/client/dashboard?tab=requests',
+      actorId: user.id,
+      actorDisplayName: displayNameOf(user),
+      bookingId: booking.id,
+    });
+
   } catch (err) {
     await transaction.rollback();
     throw err;
@@ -716,6 +853,26 @@ export const holdFirm = catchAsync(async (req: Request, res: Response) => {
     finalPrice: firmAmount,
   });
 
+  const isProviderHolding = user.role === 'PROVIDER';
+    
+  fireNotification({
+      userId: isProviderHolding ? booking.clientId : booking.providerId,
+      type: 'price_proposed',
+      priority: 'high',
+      title: isProviderHolding
+        ? 'Provider held firm on their price'
+        : 'Client held firm on their price',
+      message: isProviderHolding
+        ? `${displayNameOf(user)} kept their original price for ${booking.serviceTitle}. Accept it or escalate to support.`
+        : `${displayNameOf(user)} kept their counter for ${booking.serviceTitle}. Accept it or escalate to support.`,
+      linkTo: isProviderHolding
+        ? '/client/dashboard?tab=requests'
+        : '/provider/dashboard?tab=requests',
+      actorId: user.id,
+      actorDisplayName: displayNameOf(user),
+      bookingId: booking.id,
+    });
+
   const fresh = await Booking.findByPk(id, { include: [withHistory] });
   logger.info(
     `${user.role} ${user.email} held firm at R${firmAmount} on ${booking.requestRef}`
@@ -752,6 +909,21 @@ export const disputePrice = catchAsync(async (req: Request, res: Response) => {
     booking.set('pendingCounterParty', null);
     booking.set('holdFirm', false);
     await booking.save();
+
+    const isClientDisputing = user.role === 'CLIENT';
+    fireNotification({
+      userId: isClientDisputing ? booking.providerId : booking.clientId,
+      type: 'dispute_raised',
+      priority: 'high',
+      title: `${isClientDisputing ? 'Client' : 'Provider'} disputed the price`,
+      message: `${displayNameOf(user)} disputed the final price for ${booking.serviceTitle}. Support will review.`,
+      linkTo: isClientDisputing
+        ? '/provider/dashboard?tab=support'
+        : '/client/dashboard?tab=support',
+      actorId: user.id,
+      actorDisplayName: displayNameOf(user),
+      bookingId: booking.id,
+    });
 
   const fresh = await Booking.findByPk(id, { include: [withHistory] });
   logger.info(`${user.role} ${user.email} disputed price on ${booking.requestRef}: ${reason}`);

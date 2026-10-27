@@ -3,7 +3,18 @@ import { Request, Response } from 'express';
 import Booking from '../models/Booking';
 import WorkSession from '../models/WorkSession';
 import catchAsync from '../utils/catchAsync';
+import { createNotification } from './notifications.controller';
 import logger from '../utils/logger';
+
+function fireNotification(input: Parameters<typeof createNotification>[0]): void {
+  createNotification(input).catch((err) =>
+    logger.error('Failed to create notification', err)
+  );
+}
+
+function displayNameOf(u: { firstName?: string; lastName?: string }): string {
+  return `${u.firstName ?? ''} ${u.lastName ?? ''}`.trim() || 'User';
+}
 
 // ============================================================
 // MAPPER: WorkSession model → frontend WorkSession shape
@@ -65,6 +76,15 @@ export const arriveAtSite = catchAsync(async (req: Request, res: Response) => {
   // Only one session per booking
   const existing = await WorkSession.findOne({ where: { bookingId: booking.id } });
   if (existing) {
+    // Allow regenerating the code if the gate is still pending
+    if (existing.status === 'arrived' && !existing.gateConfirmedByClient) {
+      await existing.update({
+        currentReferenceCode: String(referenceCode),
+        referenceCodeExpiresAt: new Date(expiresAt),
+      });
+      logger.info(`Code regenerated on session ${existing.id} by ${user.email}`);
+      return res.success({ session: sessionToApi(existing) }, 'New code generated');
+    }
     return res.error('A work session already exists for this booking', 409, 'SESSION_EXISTS');
   }
 
@@ -81,6 +101,19 @@ export const arriveAtSite = catchAsync(async (req: Request, res: Response) => {
 
   // Link booking to session
   await booking.update({ workSessionId: session.id });
+
+    fireNotification({
+      userId: booking.clientId,
+      type: 'clock_in',
+      priority: 'high',
+      title: 'Provider at your gate',
+      message: `${displayNameOf(user)} has arrived for ${booking.serviceTitle}. Reference code: ${referenceCode}. Confirm only if it matches.`,
+      linkTo: '/client/dashboard?tab=requests',
+      actorId: user.id,
+      actorDisplayName: displayNameOf(user),
+      bookingId: booking.id,
+      workSessionId: session.id,
+  });
 
   logger.info(`Work session ${session.id} created for ${booking.requestRef} by ${user.email}`);
 
@@ -163,6 +196,19 @@ export const confirmGate = catchAsync(async (req: Request, res: Response) => {
     status: 'confirmed',
   });
 
+    fireNotification({
+      userId: booking.providerId,
+      type: 'clock_confirmed',
+      priority: 'high',
+      title: 'Client confirmed at the gate',
+      message: `${displayNameOf(user)} confirmed your arrival for ${booking.serviceTitle}. You can proceed.`,
+      linkTo: '/provider/dashboard?tab=requests',
+      actorId: user.id,
+      actorDisplayName: displayNameOf(user),
+      bookingId: booking.id,
+      workSessionId: session.id,
+  });
+
   logger.info(`Client ${user.email} confirmed gate for session ${session.id}`);
 
   res.success({ session: sessionToApi(session) }, 'Gate access confirmed');
@@ -194,6 +240,19 @@ export const denyGate = catchAsync(async (req: Request, res: Response) => {
   await session.update({
     currentReferenceCode: null,
     referenceCodeExpiresAt: null,
+  });
+
+    fireNotification({
+      userId: booking.providerId,
+      type: 'clock_confirmed',
+      priority: 'high',
+      title: 'Client did not confirm your code',
+      message: `${displayNameOf(user)} did not recognise your reference code for ${booking.serviceTitle}. Do not proceed without contacting them.`,
+      linkTo: '/provider/dashboard?tab=requests',
+      actorId: user.id,
+      actorDisplayName: displayNameOf(user),
+      bookingId: booking.id,
+      workSessionId: session.id,
   });
 
   logger.info(`Client ${user.email} denied gate for session ${session.id}`);
@@ -244,6 +303,19 @@ export const proceedAnyway = catchAsync(async (req: Request, res: Response) => {
     },
   });
 
+    fireNotification({
+      userId: booking.clientId,
+      type: 'clock_in',
+      priority: 'high',
+      title: 'Provider proceeded without confirmation',
+      message: `${displayNameOf(user)} started work on ${booking.serviceTitle} without your gate confirmation${note ? ` — "${String(note).trim()}"` : ''}. You can confirm this was fine or dispute it.`,
+      linkTo: '/client/dashboard?tab=requests',
+      actorId: user.id,
+      actorDisplayName: displayNameOf(user),
+      bookingId: booking.id,
+      workSessionId: session.id,
+  });
+
   logger.info(`Provider ${user.email} proceeded without confirmation on session ${session.id}`);
 
   res.success({ session: sessionToApi(session) }, 'Proceeded without confirmation');
@@ -291,6 +363,20 @@ export const retroactiveResponse = catchAsync(async (req: Request, res: Response
         resolvedByDisplayName: `${user.firstName} ${user.lastName}`,
       },
     });
+
+    fireNotification({
+      userId: booking.providerId,
+      type: 'clock_confirmed',
+      priority: 'normal',
+      title: 'Client approved retroactively',
+      message: `${displayNameOf(user)} confirmed your arrival at ${booking.serviceTitle} after the fact. You're cleared to continue.`,
+      linkTo: '/provider/dashboard?tab=requests',
+      actorId: user.id,
+      actorDisplayName: displayNameOf(user),
+      bookingId: booking.id,
+      workSessionId: session.id,
+    });
+
     logger.info(`Client ${user.email} retro-confirmed gate for session ${session.id}`);
     return res.success({ session: sessionToApi(session) }, 'Retroactively confirmed');
   }
@@ -305,6 +391,20 @@ export const retroactiveResponse = catchAsync(async (req: Request, res: Response
       resolvedByDisplayName: `${user.firstName} ${user.lastName}`,
     },
   });
+
+    fireNotification({
+      userId: booking.providerId,
+      type: 'dispute_raised',
+      priority: 'high',
+      title: 'Client disputed your arrival',
+      message: `${displayNameOf(user)} disputed your arrival at ${booking.serviceTitle}. Support will review.`,
+      linkTo: '/provider/dashboard?tab=support',
+      actorId: user.id,
+      actorDisplayName: displayNameOf(user),
+      bookingId: booking.id,
+      workSessionId: session.id,
+    });
+  
   logger.info(`Client ${user.email} disputed gate for session ${session.id}`);
   res.success({ session: sessionToApi(session) }, 'Gate disputed — support will review');
 });
@@ -359,7 +459,20 @@ export const clockIn = catchAsync(async (req: Request, res: Response) => {
 
   if (isFirstClockIn) {
     await booking.update({ status: 'in_progress' });
-  }
+  
+    fireNotification({
+      userId: booking.clientId,
+      type: 'clock_in',
+      priority: 'normal',
+      title: 'Work has started',
+      message: `${displayNameOf(user)} has clocked in and started the ${booking.serviceTitle} job.`,
+      linkTo: '/client/dashboard?tab=requests',
+      actorId: user.id,
+      actorDisplayName: displayNameOf(user),
+      bookingId: booking.id,
+      workSessionId: session.id,
+    });
+}
 
   logger.info(`Clock in on session ${session.id} by ${user.email}`);
 
