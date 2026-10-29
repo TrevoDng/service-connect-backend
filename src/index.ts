@@ -14,6 +14,7 @@ import { connectDB, sequelize } from './config/database.config';
 import { clientWorkSessionsRouter, providerWorkSessionsRouter } from './routes/workSessions.routes';
 import notificationsRoutes from './routes/notifications.routes';
 import disputesRoutes from './routes/disputes.routes';
+import reviewsRoutes from './routes/reviews.routes';
 
 dotenv.config();
 
@@ -76,6 +77,7 @@ app.use('/api/provider/bookings', detectFrontendUrl, providerWorkSessionsRouter)
 app.use('/api/bookings', detectFrontendUrl, clientWorkSessionsRouter);
 app.use('/api/notifications', detectFrontendUrl, notificationsRoutes);
 app.use('/api/disputes', detectFrontendUrl, disputesRoutes);
+app.use('/api/reviews', detectFrontendUrl, reviewsRoutes);
 
 // ============================================================
 // ✅ 5. Error Handling

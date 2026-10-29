@@ -82,6 +82,20 @@ export const arriveAtSite = catchAsync(async (req: Request, res: Response) => {
         currentReferenceCode: String(referenceCode),
         referenceCodeExpiresAt: new Date(expiresAt),
       });
+
+      fireNotification({
+        userId: booking.clientId,
+        type: 'clock_in',
+        priority: 'high',
+        title: 'New gate code — provider at your gate',
+        message: `${displayNameOf(user)} requested a new gate code for ${booking.serviceTitle}. New code: ${referenceCode}.`,
+        linkTo: '/client/dashboard?tab=requests',
+        actorId: user.id,
+        actorDisplayName: displayNameOf(user),
+        bookingId: booking.id,
+        workSessionId: existing.id,
+      });
+      
       logger.info(`Code regenerated on session ${existing.id} by ${user.email}`);
       return res.success({ session: sessionToApi(existing) }, 'New code generated');
     }
@@ -756,4 +770,52 @@ export const deleteProgressStage = catchAsync(async (req: Request, res: Response
   });
 
   res.success({ session: sessionToApi(session) }, 'Progress stage deleted');
+});
+
+// ==================== REOPEN COMPLETED SESSION ====================
+export const reopenSession = catchAsync(async (req: Request, res: Response) => {
+  const user = req.user;
+  if (!user) return res.error('Not authenticated', 401, 'UNAUTHORIZED');
+  if (user.role !== 'PROVIDER') {
+    return res.error('Only providers can reopen sessions', 403, 'FORBIDDEN');
+  }
+
+  const idParam = req.params.id;
+  const bookingId = Array.isArray(idParam) ? idParam[0] : idParam;
+
+  const booking = await Booking.findByPk(bookingId);
+  if (!booking) return res.error('Booking not found', 404, 'BOOKING_NOT_FOUND');
+  if (booking.providerId !== user.id) {
+    return res.error('Forbidden', 403, 'FORBIDDEN');
+  }
+
+  const session = await WorkSession.findOne({ where: { bookingId: booking.id } });
+  if (!session) return res.error('No work session', 404, 'SESSION_NOT_FOUND');
+  if (session.status !== 'completed') {
+    return res.error('Session is not completed', 400, 'NOT_COMPLETED');
+  }
+
+  await session.update({
+    status: 'in_progress',
+    completedAt: null,
+  });
+
+  await booking.update({ status: 'in_progress' });
+
+  fireNotification({
+    userId: booking.clientId,
+    type: 'clock_in',
+    priority: 'normal',
+    title: 'Work session reopened',
+    message: `${displayNameOf(user)} reopened the ${booking.serviceTitle} job to continue work.`,
+    linkTo: '/client/dashboard?tab=requests',
+    actorId: user.id,
+    actorDisplayName: displayNameOf(user),
+    bookingId: booking.id,
+    workSessionId: session.id,
+  });
+
+  logger.info(`Session ${session.id} reopened by ${user.email}`);
+
+  res.success({ session: sessionToApi(session) }, 'Session reopened');
 });

@@ -9,6 +9,7 @@ import WorkSession from './WorkSession';
 import Notification, { NotificationAttributes, NotificationCreationAttributes } from './Notification';
 import DisputeMessage, { DisputeMessageAttributes, DisputeMessageCreationAttributes } from './DisputeMessage';
 import Dispute from './Dispute';
+import Review, { ReviewAttributes, ReviewCreationAttributes } from './Review';
 
 
 export {
@@ -27,4 +28,7 @@ export {
   DisputeMessage,
   DisputeMessageAttributes,
   DisputeMessageCreationAttributes,
+  Review,
+  ReviewAttributes,
+  ReviewCreationAttributes,
 };

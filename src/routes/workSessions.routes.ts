@@ -17,6 +17,7 @@ import {
   setFinalPhotos,
   deleteBeforePhoto,
   setBeforePhotos,
+  reopenSession,
 } from '../controllers/workSessions.controller';
 import { verifyUserToken, requireRole } from '../services/auth.service';
 
@@ -36,6 +37,8 @@ providerWorkSessionsRouter.put('/:id/work-session/final-photos', setFinalPhotos)
 providerWorkSessionsRouter.delete('/:id/work-session/final-photos/:photoId', deleteFinalPhoto);
 providerWorkSessionsRouter.post('/:id/work-session/progress-stages', upsertProgressStage);
 providerWorkSessionsRouter.delete('/:id/work-session/progress-stages/:stageId', deleteProgressStage);
+providerWorkSessionsRouter.post('/:id/work-session/reopen', reopenSession);
+
 // Mounted at /api/client/work-sessions
 export const clientWorkSessionsRouter = Router();
 clientWorkSessionsRouter.use(verifyUserToken);
