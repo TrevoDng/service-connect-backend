@@ -17,6 +17,9 @@ import {
   acceptCounter,
   counterPrice,
   acceptFinalPrice,
+  confirmComplete,
+  complainOnBooking,
+  getProviderComplaints,
 } from '../controllers/bookings.controller';
 import { verifyUserToken, requireRole } from '../services/auth.service';
 
@@ -36,11 +39,13 @@ providerBookingsRouter.patch('/bookings/:id/decline', declineBooking);
 providerBookingsRouter.patch('/bookings/:id/consultation/clock-in', clockInConsultation);
 providerBookingsRouter.patch('/bookings/:id/consultation/clock-out', clockOutConsultation);
 providerBookingsRouter.patch('/bookings/:id/consultation/submit', submitConsultation);
+providerBookingsRouter.get('/complaints', getProviderComplaints);  
 providerBookingsRouter.get('/bookings/:id', getProviderBookingById);
 providerBookingsRouter.patch('/bookings/:id/propose-price', proposeFinalPrice);
 providerBookingsRouter.patch('/bookings/:id/accept-counter', acceptCounter);
 providerBookingsRouter.patch('/bookings/:id/hold-firm', holdFirm);
 providerBookingsRouter.patch('/bookings/:id/dispute-price', disputePrice);
+
 
 // ============================================================
 // CLIENT ROUTER (mounted at /api/bookings)
@@ -52,6 +57,8 @@ clientBookingsRouter.use(requireRole('CLIENT'));
 clientBookingsRouter.post('/', createBooking);
 clientBookingsRouter.get('/', getClientBookings);
 clientBookingsRouter.patch('/:id/pay-consultation', payConsultation);
+clientBookingsRouter.post('/:id/complain', complainOnBooking);
+clientBookingsRouter.post('/:id/confirm-complete', confirmComplete);
 clientBookingsRouter.patch('/:id/accept-price', acceptFinalPrice);
 clientBookingsRouter.patch('/:id/counter-price', counterPrice);
 clientBookingsRouter.patch('/:id/hold-firm', holdFirm);

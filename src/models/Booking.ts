@@ -54,6 +54,9 @@ export interface BookingAttributes {
   clientCounterCount: number;
   providerCounterCount: number;
   workSessionId?: string | null;
+  hasComplaint: boolean;
+  complaintText?: string | null;
+  clientConfirmedComplete: boolean;
 }
 
 export interface BookingCreationAttributes extends Optional<
@@ -77,6 +80,9 @@ export interface BookingCreationAttributes extends Optional<
   | 'clientCounterCount'
   | 'providerCounterCount'
   | 'workSessionId'
+  | 'hasComplaint'
+  | 'complaintText'
+  | 'clientConfirmedComplete'
 > {}
 
 class Booking
@@ -114,6 +120,9 @@ class Booking
   declare readonly createdAt: Date;
   declare readonly updatedAt: Date;
   declare workSessionId?: string | null;
+  declare hasComplaint: boolean;
+  declare complaintText?: string | null;
+  declare clientConfirmedComplete: boolean;
 }
 
 Booking.init(
@@ -269,6 +278,23 @@ Booking.init(
       type: DataTypes.UUID,
       allowNull: true,
       field: 'work_session_id',
+    },
+        hasComplaint: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+      field: 'has_complaint',
+    },
+    complaintText: {
+      type: DataTypes.TEXT,
+      allowNull: true,
+      field: 'complaint_text',
+    },
+    clientConfirmedComplete: {
+      type: DataTypes.BOOLEAN,
+      allowNull: false,
+      defaultValue: false,
+      field: 'client_confirmed_complete',
     },
   },
   {

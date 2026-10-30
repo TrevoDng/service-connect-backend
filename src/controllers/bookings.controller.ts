@@ -55,11 +55,11 @@ function toApi(b: Booking) {
     // ---------- Phase 3 placeholders (still undefined) ----------
     finalPrice: b.finalPrice !== null && b.finalPrice !== undefined ? Number(b.finalPrice) : undefined,
     priceHistory: ((b as any).priceHistory ?? []).map((h: any) => ({
-      stage: h.stage,
-      amount: Number(h.amount),
-      at: h.createdAt instanceof Date ? h.createdAt.toISOString() : String(h.createdAt),
-      byUserId: h.byUserId,
-      note: h.note ?? undefined,
+    stage: h.stage,
+    amount: Number(h.amount),
+    at: h.createdAt instanceof Date ? h.createdAt.toISOString() : String(h.createdAt),
+    byUserId: h.byUserId,
+    note: h.note ?? undefined,
 })),
     pendingCounterParty: b.pendingCounterParty ?? undefined,
     holdFirm: b.holdFirm ?? false,
@@ -73,6 +73,9 @@ function toApi(b: Booking) {
       specialInstructions: false,
     },
     workSessionId: b.workSessionId ?? undefined,
+    hasComplaint: b.hasComplaint ?? false,
+    complaintText: b.complaintText ?? undefined,
+    clientConfirmedComplete: b.clientConfirmedComplete ?? false,
     consultationClockConfirmedByClient: undefined,
   };
 }
@@ -928,4 +931,103 @@ export const disputePrice = catchAsync(async (req: Request, res: Response) => {
   const fresh = await Booking.findByPk(id, { include: [withHistory] });
   logger.info(`${user.role} ${user.email} disputed price on ${booking.requestRef}: ${reason}`);
   res.success({ booking: toApi(fresh!) }, 'Price disputed');
+});
+
+// ==================== CLIENT RAISES COMPLAINT (COMPLETED JOB) ====================
+export const complainOnBooking = catchAsync(async (req: Request, res: Response) => {
+  const user = req.user;
+  if (!user) return res.error('Not authenticated', 401, 'UNAUTHORIZED');
+  if (user.role !== 'CLIENT') return res.error('Only clients can complain', 403, 'FORBIDDEN');
+
+  const idParam = req.params.id;
+  const id = Array.isArray(idParam) ? idParam[0] : idParam;
+  const { text } = req.body;
+
+  if (!text || !String(text).trim()) {
+    return res.error('Complaint text is required', 400, 'MISSING_TEXT');
+  }
+
+  const booking = await Booking.findByPk(id);
+  if (!booking) return res.error('Booking not found', 404, 'BOOKING_NOT_FOUND');
+  if (booking.clientId !== user.id) return res.error('Forbidden', 403, 'FORBIDDEN');
+  if (booking.status !== 'completed') {
+    return res.error('Can only complain about completed jobs', 400, 'INVALID_STATUS');
+  }
+  if (booking.hasComplaint) {
+    return res.error('You have already raised a complaint', 409, 'ALREADY_COMPLAINED');
+  }
+
+  await booking.update({
+    hasComplaint: true,
+    complaintText: String(text).trim(),
+  });
+
+  fireNotification({
+    userId: booking.providerId,
+    type: 'booking_declined',
+    priority: 'high',
+    title: 'New complaint',
+    message: `${displayNameOf(user)} raised a complaint about ${booking.serviceTitle}. Check your Complaints tab.`,
+    linkTo: '/provider/dashboard?tab=complaints',
+    actorId: user.id,
+    actorDisplayName: displayNameOf(user),
+    bookingId: booking.id,
+  });
+
+  logger.info(`Complaint on ${booking.requestRef} by ${user.email}`);
+
+  res.success({ booking: await toApi(booking) }, 'Complaint submitted');
+});
+
+// ==================== CLIENT CONFIRMS COMPLETE (MOVES TO CLOSED) ====================
+export const confirmComplete = catchAsync(async (req: Request, res: Response) => {
+  const user = req.user;
+  if (!user) return res.error('Not authenticated', 401, 'UNAUTHORIZED');
+  if (user.role !== 'CLIENT') return res.error('Only clients can confirm', 403, 'FORBIDDEN');
+
+  const idParam = req.params.id;
+  const id = Array.isArray(idParam) ? idParam[0] : idParam;
+
+  const booking = await Booking.findByPk(id);
+  if (!booking) return res.error('Booking not found', 404, 'BOOKING_NOT_FOUND');
+  if (booking.clientId !== user.id) return res.error('Forbidden', 403, 'FORBIDDEN');
+  if (booking.status !== 'completed') {
+    return res.error('Can only confirm completed jobs', 400, 'INVALID_STATUS');
+  }
+  if (booking.clientConfirmedComplete) {
+    return res.error('Already confirmed', 409, 'ALREADY_CONFIRMED');
+  }
+
+  await booking.update({ clientConfirmedComplete: true });
+
+  fireNotification({
+    userId: booking.providerId,
+    type: 'consultation_completed',
+    priority: 'normal',
+    title: 'Job closed',
+    message: `${displayNameOf(user)} confirmed ${booking.serviceTitle} is complete. The job is now closed.`,
+    linkTo: '/provider/dashboard?tab=work-log',
+    actorId: user.id,
+    actorDisplayName: displayNameOf(user),
+    bookingId: booking.id,
+  });
+
+  logger.info(`Job ${booking.requestRef} confirmed complete by ${user.email}`);
+
+  res.success({ booking: await toApi(booking) }, 'Job confirmed and closed');
+});
+
+// ==================== PROVIDER SEES ALL COMPLAINTS ====================
+export const getProviderComplaints = catchAsync(async (req: Request, res: Response) => {
+  const user = req.user;
+  if (!user) return res.error('Not authenticated', 401, 'UNAUTHORIZED');
+  if (user.role !== 'PROVIDER') return res.error('Providers only', 403, 'FORBIDDEN');
+
+  const bookings = await Booking.findAll({
+    where: { providerId: user.id, hasComplaint: true },
+    include: [withHistory],
+    order: [['updatedAt', 'DESC']],
+  });
+
+  res.success({ complaints: bookings.map(toApi) }, 'Complaints retrieved');
 });
