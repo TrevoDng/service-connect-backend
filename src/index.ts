@@ -15,7 +15,11 @@ import { clientWorkSessionsRouter, providerWorkSessionsRouter } from './routes/w
 import notificationsRoutes from './routes/notifications.routes';
 import disputesRoutes from './routes/disputes.routes';
 import reviewsRoutes from './routes/reviews.routes';
-
+import chatRoutes from './routes/chat.routes';
+import uploadRoutes from './routes/upload.routes';
+import path from 'path';
+import { apiLimiter } from './middleware/rateLimit.middleware';
+import registrationRoutes from './routes/registration.routes';
 dotenv.config();
 
 const app = express();
@@ -34,13 +38,22 @@ app.use(helmet({
   crossOriginResourcePolicy: { policy: "cross-origin" }
 }));
 app.use(cors({
-  origin: process.env.FRONTEND_URL || 'http://localhost:3000',
+  origin: function (origin, callback) {
+    // Allow requests with no origin (like Postman or server-to-server)
+    // OR allow any localhost port during development
+    if (!origin || origin.startsWith('http://localhost:') || origin.startsWith('http://127.0.0.1:')) {
+      callback(null, true);
+    } else {
+      callback(new Error('Not allowed by CORS'));
+    }
+  },
   credentials: true
 }));
 app.use(morgan('dev'));
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 app.use(responseMiddleware);
+app.use(apiLimiter); // Apply rate limiting to all routes
 
 // ============================================================
 // ✅ 3. Health Check
@@ -69,6 +82,7 @@ app.get('/api/health', async (req: Request, res: Response) => {
 // ============================================================
 app.use('/api/auth', detectFrontendUrl, authRoutes);
 app.use('/api/admin', detectFrontendUrl, adminRoutes);
+app.use('/api/registration', detectFrontendUrl, registrationRoutes);
 app.use('/api/services', detectFrontendUrl, servicesRouter);
 app.use('/api/provider', detectFrontendUrl, providerRouter);
 app.use('/api/provider', detectFrontendUrl, providerBookingsRouter);
@@ -77,7 +91,12 @@ app.use('/api/provider/bookings', detectFrontendUrl, providerWorkSessionsRouter)
 app.use('/api/bookings', detectFrontendUrl, clientWorkSessionsRouter);
 app.use('/api/notifications', detectFrontendUrl, notificationsRoutes);
 app.use('/api/disputes', detectFrontendUrl, disputesRoutes);
+app.use('/api/chat', detectFrontendUrl, chatRoutes);
 app.use('/api/reviews', detectFrontendUrl, reviewsRoutes);
+// Serve the uploaded files statically
+app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
+// Upload endpoint
+app.use('/api/upload', detectFrontendUrl, uploadRoutes);
 
 // ============================================================
 // ✅ 5. Error Handling

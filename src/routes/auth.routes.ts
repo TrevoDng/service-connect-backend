@@ -11,6 +11,7 @@ import {
   resendVerification
 } from '../controllers/auth.controller';
 import { verifyUserToken, requireRole } from '../services/auth.service';
+import { authLimiter } from '../middleware/rateLimit.middleware';
 
 const router = Router();
 
@@ -19,6 +20,7 @@ const router = Router();
 // Unified Registration - Handles both customers and employees
 router.post(
   '/register',
+  authLimiter,
   [
     body('firstName').notEmpty().withMessage('First name is required'),
     body('lastName').notEmpty().withMessage('Last name is required'),
@@ -40,6 +42,7 @@ router.post(
 // Login
 router.post(
   '/login',
+  authLimiter,
   [
     body('email').isEmail().withMessage('Valid email is required'),
     body('password').notEmpty().withMessage('Password is required'),

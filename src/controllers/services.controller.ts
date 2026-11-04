@@ -206,3 +206,18 @@ export const getServiceById = catchAsync(async (req: Request, res: Response) => 
 
   res.success({ service: toApi(service) }, 'Service retrieved successfully');
 });
+
+// ==================== GET ALL CATEGORIES (public) ====================
+export const getCategories = catchAsync(async (req: Request, res: Response) => {
+  const categories = await Service.findAll({
+    attributes: ['category'], // Only select the category column
+    group: ['category'],      // Group to get unique values
+    where: { status: 'active' },
+    order: [['category', 'ASC']],
+  });
+
+  // Extract just the strings into a flat array: ['Plumbing', 'Electrical', ...]
+  const categoryList = categories.map((c) => c.category).filter(Boolean);
+
+  res.success(categoryList, 'Categories retrieved successfully');
+});

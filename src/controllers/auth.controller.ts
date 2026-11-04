@@ -12,25 +12,15 @@ import { generateToken, verifyJwtToken } from '../utils/jwt.utils';
 import logger from '../utils/logger';
 import catchAsync from '../utils/catchAsync';
 import AppError from '../utils/AppError';
-import { assign } from 'nodemailer/lib/shared';
 
 // ==================== REGISTRATION CONTROLLER ====================
 export const register = catchAsync(async (req: Request, res: Response) => {
-  // Check for validation errors
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.error('Validation failed', 400, 'VALIDATION_ERROR', { errors: errors.array() });
   }
 
-  const { 
-    firstName, 
-    lastName, 
-    email, 
-    password, 
-    secretCode, 
-    phone, 
-    rememberMe 
-  } = req.body;
+  const { firstName, lastName, email, password, secretCode, phone, rememberMe } = req.body;
   
   const ipAddress = req.ip;
   const userAgent = req.headers['user-agent'];
@@ -38,24 +28,18 @@ export const register = catchAsync(async (req: Request, res: Response) => {
   const transaction = await User.sequelize!.transaction();
   
   try {
-    // Check if email already exists
-    const existingUser = await User.findOne({ 
-      where: { email },
-      transaction 
-    });
-    
+    const existingUser = await User.findOne({ where: { email }, transaction });
     if (existingUser) {
       await transaction.rollback();
       return res.error('Email already registered', 409, 'EMAIL_EXISTS');
     }
     
-    let role: 'CLIENT' | 'EMPLOYEE' = 'CLIENT';
+    let role: 'CLIENT' | 'EMPLOYEE' | 'PROVIDER' = 'CLIENT';
     let status: 'pending_email' | 'active' = 'active';
     let requiresEmailVerification = false;
     let requiresAdminApproval = false;
     let validatedSecretCode = null;
     
-    // Check if secret code is provided -> Employee registration
     if (secretCode) {
       const inviteCode = await SecretCode.findOne({
         where: {
@@ -79,38 +63,23 @@ export const register = catchAsync(async (req: Request, res: Response) => {
         return res.error('Invalid or expired registration code. Contact your administrator.', 403, 'INVALID_CODE');
       }
 
-      // NEW: Validate that the email matches the assigned email
       if (inviteCode.assignedEmail.toLowerCase() !== email.toLowerCase()) {
         await AuditLog.create({
           eventType: 'REGISTRATION_FAILED',
           severity: 'WARNING',
           email,
-          details: { 
-            secretCode, 
-            reason: 'Email mismatch',
-            expectedEmail: inviteCode.assignedEmail,
-            providedEmail: email
-          },
+          details: { secretCode, reason: 'Email mismatch', expectedEmail: inviteCode.assignedEmail, providedEmail: email },
           ipAddress,
         }, { transaction });
         
         await transaction.rollback();
-        return res.error(
-          'This registration code is assigned to a different email address. Please use the correct email or contact your administrator.',
-          403,
-          'EMAIL_MISMATCH'
-        );
+        return res.error('This registration code is assigned to a different email address.', 403, 'EMAIL_MISMATCH');
       }
       
-      // Mark code as used
-      await inviteCode.update({
-        isUsed: true,
-        usedAt: new Date(),
-        usedBy: undefined, // We don't have the user ID yet, will update after user is created
-      }, { transaction });
+      await inviteCode.update({ isUsed: true, usedAt: new Date() }, { transaction });
       
       validatedSecretCode = secretCode;
-      role = 'EMPLOYEE';
+      role = inviteCode.role || 'EMPLOYEE';
       status = 'pending_email';
       requiresEmailVerification = true;
       requiresAdminApproval = true;
@@ -118,18 +87,16 @@ export const register = catchAsync(async (req: Request, res: Response) => {
 
     const frontendUrl = req.frontendUrl || process.env.FRONTEND_URL || 'http://localhost:3000';
     
-    // Generate email verification token for employees
     let verificationToken = undefined;
     let tokenExpires = undefined;
     
-    if (role === 'EMPLOYEE') {
+    if (role === 'EMPLOYEE' || role === 'PROVIDER') {
       verificationToken = generateVerificationToken();
       tokenExpires = getTokenExpiry(24);
     }
     
     const hashedPassword = await bcrypt.hash(password, 12);
     
-    // Create user account
     const user = await User.create({
       firstName,
       lastName,
@@ -143,50 +110,32 @@ export const register = catchAsync(async (req: Request, res: Response) => {
       secretCode: validatedSecretCode,
     }, { transaction });
 
-    // If we have a secret code, update it with the user ID
     if (secretCode) {
-      await SecretCode.update(
-        { usedBy: user.id },
-        { where: { code: secretCode }, transaction }
-      );
+      await SecretCode.update({ usedBy: user.id }, { where: { code: secretCode }, transaction });
     }
     
-    console.log('User created with ID:', user.id);
-    
-    // Log successful registration
     await AuditLog.create({
       eventType: 'USER_REGISTERED',
       severity: 'INFO',
       userId: user.id,
       email,
-      details: { 
-        userType: role.toLowerCase(), 
-        secretCode: !!validatedSecretCode, 
-        rememberMe 
-      },
+      details: { userType: role.toLowerCase(), secretCode: !!validatedSecretCode, rememberMe },
       ipAddress,
       userAgent,
     }, { transaction });
     
     await transaction.commit();
     
-    // TODO: Send verification email when email service is configured
     if (verificationToken) {
       await sendVerificationEmail(email, verificationToken, role.toLowerCase(), frontendUrl);
     }
     
-    // Prepare success message based on role
     const message = role === 'CLIENT' 
       ? 'Registration successful! You can now log in.'
       : 'Registration successful! Please check your email to verify your account.';
     
     res.success({
-      user: {
-        id: user.id,
-        name: `${user.firstName} ${user.lastName}`,
-        email: user.email,
-        role: user.role
-      },
+      user: { id: user.id, name: `${user.firstName} ${user.lastName}`, email: user.email, role: user.role },
       requiresEmailVerification,
       requiresAdminApproval
     }, message);
@@ -194,13 +143,12 @@ export const register = catchAsync(async (req: Request, res: Response) => {
   } catch (error: any) {
     await transaction.rollback();
     logger.error('Registration failed', { error: error.message, email });
-    res.error('Registration failed. Please try again.', 500, 'REGISTRATION_ERROR');
+    return res.error('Registration failed. Please try again.', 500, 'REGISTRATION_ERROR');
   }
 });
 
 // ==================== LOGIN CONTROLLER ====================
 export const login = catchAsync(async (req: Request, res: Response) => {
-  // Check for validation errors
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.error('Validation failed', 400, 'VALIDATION_ERROR', { errors: errors.array() });
@@ -221,16 +169,20 @@ export const login = catchAsync(async (req: Request, res: Response) => {
       return res.error('Invalid credentials', 401, 'INVALID_CREDENTIALS');
     }
     
-    // Role-specific status checks
+    // ROLE-SPECIFIC STATUS CHECKS
     if (user.role === 'ADMIN' && user.status !== 'active') {
       return res.error('Admin account is not active. Please contact support.', 403, 'ACCOUNT_INACTIVE');
     }
 
     if (user.role === 'CLIENT' && user.status !== 'active') {
-      return res.error('Customer account is not active. Please contact support.', 403, 'ACCOUNT_INACTIVE');
+      if (user.status === 'pending_email') {
+        return res.error('Please verify your email before logging in.', 403, 'EMAIL_NOT_VERIFIED');
+      }
+      return res.error('Account is not active. Please contact support.', 403, 'ACCOUNT_INACTIVE');
     }
 
-    if (user.role === 'EMPLOYEE') {
+    // 🚨 FIXED: Added PROVIDER to the strict status checks!
+    if (user.role === 'EMPLOYEE' || user.role === 'PROVIDER') {
       if (user.status === 'pending_email') {
         return res.error('Please verify your email before logging in.', 403, 'EMAIL_NOT_VERIFIED');
       }
@@ -238,69 +190,34 @@ export const login = catchAsync(async (req: Request, res: Response) => {
         return res.error('Your account is pending admin approval.', 403, 'PENDING_APPROVAL');
       }
       if (user.status !== 'active') {
-        return res.error(`Account status: ${user.status}. Contact HR.`, 403, 'ACCOUNT_INACTIVE');
+        return res.error(`Account status: ${user.status}. Please contact support.`, 403, 'ACCOUNT_INACTIVE');
       }
-    }
-
-        // Also for CLIENT role:
-    if (user.role === 'CLIENT' && user.status !== 'active') {
-      // Check if it's pending_email
-      if (user.status === 'pending_email') {
-        return res.error(
-          'Please verify your email before logging in.', 
-          403, 
-          'EMAIL_NOT_VERIFIED'
-        );
-      }
-      return res.error(
-        'Account is not active. Please contact support.', 
-        403, 
-        'ACCOUNT_INACTIVE'
-      );
     }
     
-    // Update last login
     await user.update({ lastLogin: new Date() });
-    
-    // Generate JWT
     const token = generateToken({ id: user.id, email: user.email, role: user.role });
     
     res.success({
       token,
-      user: {
-        id: user.id,
-        firstName: user.firstName,
-        lastName: user.lastName,
-        email: user.email,
-        role: user.role
-      }
+      user: { id: user.id, firstName: user.firstName, lastName: user.lastName, email: user.email, role: user.role }
     }, 'Login successful');
     
   } catch (error: any) {
-    console.error('Login error:', error);
-    logger.error('Login failed', { 
-      email, 
-      errorMessage: error.message,
-      errorStack: error.stack,
-      errorName: error.name
-    });
-    res.error('Login failed. Please try again.', 500, 'LOGIN_ERROR');
+    logger.error('Login failed', { email, errorMessage: error.message });
+    return res.error('Login failed. Please try again.', 500, 'LOGIN_ERROR');
   }
 });
 
 // ==================== EMAIL VERIFICATION CONTROLLER ====================
 export const verifyEmail = catchAsync(async (req: Request, res: Response) => {
   const { token } = req.query;
-
   const frontendUrl = req.frontendUrl || process.env.FRONTEND_URL || 'http://localhost:3000';
   
   if (!token || typeof token !== 'string') {
-    // Check if it's an API request or browser request
     if (req.headers.accept?.includes('application/json')) {
       return res.error('Invalid verification token', 400, 'INVALID_TOKEN');
     }
-    //const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3000';
-    return res.redirect(`${frontendUrl}/verify-email?reason=invalid-token`);
+    return res.redirect(`${frontendUrl}/service-connect/verify-email?reason=invalid-token`);
   }
   
   try {
@@ -316,13 +233,14 @@ export const verifyEmail = catchAsync(async (req: Request, res: Response) => {
       if (req.headers.accept?.includes('application/json')) {
         return res.error('Invalid or expired verification token', 400, 'INVALID_TOKEN');
       }
-      return res.redirect(`${process.env.FRONTEND_URL}/verify-email?reason=invalid-token`);
+      return res.redirect(`${frontendUrl}/service-connect/verify-email?reason=invalid-token`);
     }
     
     let newStatus: 'pending_approval' | 'active';
     let message: string;
     
-    if (user.role === 'EMPLOYEE') {
+    // 🚨 FIXED: Added PROVIDER to the status update logic!
+    if (user.role === 'EMPLOYEE' || user.role === 'PROVIDER') {
       newStatus = 'pending_approval';
       message = 'Email verified! Your registration is now pending admin approval. You will be notified once approved.';
     } else {
@@ -344,19 +262,13 @@ export const verifyEmail = catchAsync(async (req: Request, res: Response) => {
       details: { role: user.role },
     });
     
-    // For API requests, return JSON response
     if (req.headers.accept?.includes('application/json')) {
-      return res.success({
-        verified: true,
-        message,
-        role: user.role
-      }, 'Email verified successfully');
+      return res.success({ verified: true, message, role: user.role }, 'Email verified successfully');
     }
     
-    // For browser requests, redirect to frontend verification page
-    //const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3001';
+    // 🚨 FIXED: The success redirect is now correctly inside the try block!
     return res.redirect(
-      `${frontendUrl}/verify-email?verified=true&message=${encodeURIComponent(message)}&role=${user.role}`
+      `${frontendUrl}/service-connect/verify-email?verified=true&message=${encodeURIComponent(message)}&role=${user.role}`
     );
     
   } catch (error) {
@@ -366,14 +278,13 @@ export const verifyEmail = catchAsync(async (req: Request, res: Response) => {
       return res.error('Verification failed', 500, 'VERIFICATION_ERROR');
     }
     
-    //const frontendUrl = process.env.FRONTEND_URL || 'http://localhost:3001';
-    return res.redirect(`${frontendUrl}/verify-email?reason=error`);
+    // 🚨 FIXED: The catch block now correctly redirects to the error state
+    return res.redirect(`${frontendUrl}/service-connect/verify-email?reason=error`);
   }
 });
 
 // ==================== RESEND VERIFICATION EMAIL CONTROLLER ====================
 export const resendVerification = catchAsync(async (req: Request, res: Response) => {
-  // Check for validation errors
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.error('Validation failed', 400, 'VALIDATION_ERROR', { errors: errors.array() });
@@ -385,28 +296,23 @@ export const resendVerification = catchAsync(async (req: Request, res: Response)
     return res.error('Email is required', 400, 'MISSING_EMAIL');
   }
 
-  // Find user by email
   const user = await User.findOne({ where: { email } });
 
   if (!user) {
     return res.error('User not found with this email', 404, 'USER_NOT_FOUND');
   }
 
-  // Check if user is already verified
   if (user.status === 'active') {
     return res.error('This email is already verified. Please login.', 400, 'ALREADY_VERIFIED');
   }
 
-  // Check if user is in pending_email state
   if (user.status !== 'pending_email') {
     return res.error(`Account is ${user.status}. Please contact support.`, 400, 'INVALID_STATUS');
   }
 
-  // Generate new verification token
   const verificationToken = generateVerificationToken();
-  const tokenExpires = getTokenExpiry(24); // 24 hours
+  const tokenExpires = getTokenExpiry(24);
 
-  // Update user with new token
   await user.update({
     verificationToken: verificationToken,
     verificationTokenExpires: tokenExpires,
@@ -414,19 +320,14 @@ export const resendVerification = catchAsync(async (req: Request, res: Response)
 
   const frontendUrl = req.frontendUrl || process.env.FRONTEND_URL || 'http://localhost:3000';
 
-  // Send verification email
   await sendVerificationEmail(email, verificationToken, user.role.toLowerCase(), frontendUrl);
-   //console.log("frontendUrl: ", frontendUrl);
-  // Log the action
+
   await AuditLog.create({
     eventType: 'VERIFICATION_RESENT',
     severity: 'INFO',
     userId: user.id,
     email: user.email,
-    details: {
-      userRole: user.role,
-      ipAddress: req.ip,
-    },
+    details: { userRole: user.role, ipAddress: req.ip },
   });
 
   logger.info(`Verification email resent to ${email}`);
@@ -437,62 +338,8 @@ export const resendVerification = catchAsync(async (req: Request, res: Response)
   }, 'Verification email resent successfully');
 });
 
-/*export const verifyEmail = catchAsync(async (req: Request, res: Response) => {
-  const { token } = req.query;
-  
-  if (!token || typeof token !== 'string') {
-    return res.redirect('/verify-failed?reason=invalid-token');
-  }
-  
-  try {
-    const user = await User.findOne({
-      where: {
-        verificationToken: token,
-        verificationTokenExpires: { [Op.gt]: new Date() },
-        status: 'pending_email',
-      }
-    });
-    
-    if (!user) {
-      return res.redirect('/verify-failed?reason=invalid-token');
-    }
-    
-    let newStatus: 'pending_approval' | 'active';
-    let message: string;
-    
-    if (user.role === 'EMPLOYEE') {
-      newStatus = 'pending_approval';
-      message = 'Email verified! Your registration is now pending admin approval. You will be notified once approved.';
-    } else {
-      newStatus = 'active';
-      message = 'Email verified! Your account is now active. You can now log in.';
-    }
-    
-    await user.update({
-      status: newStatus,
-      verificationToken: undefined,
-      verificationTokenExpires: undefined,
-    });
-    
-    await AuditLog.create({
-      eventType: 'EMAIL_VERIFIED',
-      severity: 'INFO',
-      userId: user.id,
-      email: user.email,
-      details: { role: user.role },
-    });
-    
-    res.redirect(`/login?verified=true&message=${encodeURIComponent(message)}`);
-    
-  } catch (error) {
-    logger.error('Email verification failed', { error });
-    res.redirect('/verify-failed?reason=error');
-  }
-});
-*/
 // ==================== VALIDATE SECRET CODE CONTROLLER ====================
 export const validateSecretCode = catchAsync(async (req: Request, res: Response) => {
-  // Check for validation errors
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.error('Validation failed', 400, 'VALIDATION_ERROR', { errors: errors.array() });
@@ -504,7 +351,6 @@ export const validateSecretCode = catchAsync(async (req: Request, res: Response)
     return res.error('Secret code is required', 400, 'MISSING_CODE');
   }
 
-  // Find valid secret code
   const inviteCode = await SecretCode.findOne({
     where: {
       code: secretCode,
@@ -521,16 +367,14 @@ export const validateSecretCode = catchAsync(async (req: Request, res: Response)
     expireAt: inviteCode.expiresAt,
     isValid: true,
     assignedEmail: inviteCode.assignedEmail,
+    role: inviteCode.role, // Return the role so the frontend knows!
   }, 'Secret code is valid');
 });
 
 // ==================== GET CURRENT USER CONTROLLER ====================
 export const getMe = catchAsync(async (req: Request, res: Response) => {
-  res.success({
-    user: req.user
-  }, 'User retrieved successfully');
+  res.success({ user: req.user }, 'User retrieved successfully');
 });
-
 
 export const updateProfile = catchAsync(async (req: Request, res: Response) => {
   const user = req.user;
@@ -540,13 +384,7 @@ export const updateProfile = catchAsync(async (req: Request, res: Response) => {
     return res.error('User not authenticated', 401, 'UNAUTHORIZED');
   }
   
-  // Update only allowed fields
-  await User.update(
-    { firstName, lastName, phone },
-    { where: { id: user.id } }
-  );
-  
-  // Fetch updated user
+  await User.update({ firstName, lastName, phone }, { where: { id: user.id } });
   const updatedUser = await User.findByPk(user.id);
   
   res.success({ user: updatedUser }, 'Profile updated successfully');

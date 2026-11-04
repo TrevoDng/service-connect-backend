@@ -6,7 +6,9 @@ import DisputeMessage from '../models/DisputeMessage';
 import Booking from '../models/Booking';
 import catchAsync from '../utils/catchAsync';
 import logger from '../utils/logger';
-import { createNotification } from './notifications.controller';
+import { createNotification, notifyStaff } from './notifications.controller';
+import { sendDisputeRaisedEmail } from '../services/email.service';
+import { User } from '../models';
 
 // ============================================================
 // HELPERS
@@ -14,6 +16,12 @@ import { createNotification } from './notifications.controller';
 function fireNotification(input: Parameters<typeof createNotification>[0]): void {
   createNotification(input).catch((err) =>
     logger.error('Failed to create notification', err)
+  );
+}
+
+function fireStaffNotification(input: Parameters<typeof notifyStaff>[0]): void {
+  notifyStaff(input).catch((err) =>
+    logger.error('Failed to notify staff', err)
   );
 }
 
@@ -73,7 +81,7 @@ export const raiseDispute = catchAsync(async (req: Request, res: Response) => {
     return res.error('Only clients and providers can raise disputes', 403, 'FORBIDDEN');
   }
 
-  const { bookingId, category, reason, photos } = req.body;
+  const {id, bookingId, category, reason, photos } = req.body;
 
   if (!bookingId || !category || !reason || !String(reason).trim()) {
     return res.error('bookingId, category, and reason are required', 400, 'MISSING_FIELDS');
@@ -106,6 +114,7 @@ export const raiseDispute = catchAsync(async (req: Request, res: Response) => {
   }
 
   const dispute = await Dispute.create({
+    id,
     bookingId: booking.id,
     requestRef: booking.requestRef,
     raisedByUserId: user.id,
@@ -143,6 +152,30 @@ export const raiseDispute = catchAsync(async (req: Request, res: Response) => {
     bookingId: booking.id,
   });
 
+  // Notify Staff
+  fireStaffNotification({
+    type: 'dispute_raised',
+    title: 'New dispute raised',
+    message: `${displayNameOf(user)} raised a dispute about ${booking.serviceTitle}.`,
+    linkTo: '/admin-dashboard?tab=disputes',
+    actorId: user.id,
+    actorDisplayName: displayNameOf(user),
+    bookingId: booking.id,
+  });
+
+  const frontendUrl = req.frontendUrl || process.env.FRONTEND_URL || 'http://localhost:3000';
+
+    // Send email to the party being disputed against
+  User.findByPk(dispute.againstUserId).then(againstUser => {
+    if (againstUser) {
+      sendDisputeRaisedEmail(
+        againstUser.email, displayNameOf(againstUser), displayNameOf(user!), 
+        booking.serviceTitle, category, String(reason).trim(), 
+        `${frontendUrl}/${dispute.againstRole === 'CLIENT' ? 'client' : 'provider'}/dashboard?tab=support`
+      ).catch(err => logger.error('Email failed', err));
+    }
+  });
+  
   logger.info(`Dispute ${dispute.id} raised by ${user.email} on ${booking.requestRef}`);
 
   res.status(201).success({ dispute: await toApi(dispute) }, 'Dispute raised');
@@ -257,6 +290,19 @@ export const addMessage = catchAsync(async (req: Request, res: Response) => {
       actorDisplayName: displayNameOf(user),
       bookingId: dispute.bookingId,
     });
+
+        // Notify Staff only if the sender is not staff
+    if (!staff) {
+      fireStaffNotification({
+        type: 'dispute_message',
+        title: 'New reply on dispute',
+        message: `${displayNameOf(user)} replied on the dispute for ${dispute.requestRef}.`,
+        linkTo: '/admin-dashboard?tab=disputes',
+        actorId: user.id,
+        actorDisplayName: displayNameOf(user),
+        bookingId: dispute.bookingId,
+      });
+    }
   }
 
   res.success(

@@ -10,7 +10,9 @@ import Notification, { NotificationAttributes, NotificationCreationAttributes } 
 import DisputeMessage, { DisputeMessageAttributes, DisputeMessageCreationAttributes } from './DisputeMessage';
 import Dispute from './Dispute';
 import Review, { ReviewAttributes, ReviewCreationAttributes } from './Review';
-
+import ChatThread, { ChatThreadAttributes, ChatThreadCreationAttributes } from './ChatThread';
+import ChatMessage, { ChatMessageAttributes, ChatMessageCreationAttributes, ChatMessageStatus, ChatAttachment } from './ChatMessage';
+import RegistrationRequest from './RegistrationRequest';
 
 export {
   sequelize,
@@ -31,4 +33,13 @@ export {
   Review,
   ReviewAttributes,
   ReviewCreationAttributes,
+  ChatThread,
+  ChatThreadAttributes,
+  ChatThreadCreationAttributes,
+  ChatMessage,
+  ChatMessageAttributes,
+  ChatMessageCreationAttributes,
+  ChatMessageStatus,
+  ChatAttachment,
+  RegistrationRequest,
 };

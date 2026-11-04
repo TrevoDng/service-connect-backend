@@ -5,13 +5,20 @@ import Booking from '../models/Booking';
 import sequelize from '../config/database.config';
 import catchAsync from '../utils/catchAsync';
 import logger from '../utils/logger';
-import { BookingPriceHistory } from '../models';
-import { createNotification } from './notifications.controller';
+import { BookingPriceHistory, User } from '../models';
+import { createNotification, notifyStaff } from './notifications.controller';
+import { sendBookingAcceptedEmail, sendBookingDeclinedEmail, sendBookingRequestedEmail, sendPriceProposedEmail } from '../services/email.service';
 
 // Helper: fire-and-forget notification (never blocks the main flow)
 function fireNotification(input: Parameters<typeof createNotification>[0]): void {
   createNotification(input).catch((err) =>
     logger.error('Failed to create notification', err)
+  );
+}
+
+function fireStaffNotification(input: Parameters<typeof notifyStaff>[0]): void {
+  notifyStaff(input).catch((err) =>
+    logger.error('Failed to notify staff', err)
   );
 }
 
@@ -109,6 +116,7 @@ export const createBooking = catchAsync(async (req: Request, res: Response) => {
   }
 
   const {
+    id,
     providerId,
     providerDisplayName,
     serviceTitle,
@@ -136,6 +144,7 @@ export const createBooking = catchAsync(async (req: Request, res: Response) => {
   const requestRef = await generateRequestRef();
 
   const booking = await Booking.create({
+    id,
     requestRef,
     clientId: user.id,
     clientDisplayName: clientDisplayName || `${user.firstName} ${user.lastName}`,
@@ -162,6 +171,19 @@ export const createBooking = catchAsync(async (req: Request, res: Response) => {
       actorDisplayName: displayNameOf(user),
       bookingId: booking.id,
   });
+
+  const frontendUrl = req.frontendUrl || process.env.FRONTEND_URL || 'http://localhost:3000';
+
+    // Send email to provider
+  User.findByPk(providerId).then(providerUser => {
+      if (providerUser) {
+        sendBookingRequestedEmail(
+          providerUser.email, displayNameOf(providerUser), displayNameOf(user!), 
+          booking.serviceTitle, price, 
+          `${frontendUrl}/service-connect/provider/dashboard?tab=requests` // <-- FIXED
+        ).catch(err => logger.error('Email failed', err));
+      }
+    });
 
   logger.info(`Booking ${booking.requestRef} created by client ${user.email}`);
 
@@ -240,17 +262,31 @@ export const acceptBooking = catchAsync(async (req: Request, res: Response) => {
 
   await booking.update({ status: 'accepted', consultationFee: fee });
 
-  fireNotification({
-  userId: booking.clientId,
-  type: 'booking_accepted',
-  priority: 'high',
-  title: 'Request accepted',
-  message: `${displayNameOf(user)} accepted your request for ${booking.serviceTitle}. Pay the consultation fee of R${fee} to schedule the site visit.`,
-  linkTo: '/client/dashboard?tab=requests',
-  actorId: user.id,
-  actorDisplayName: displayNameOf(user),
-  bookingId: booking.id,
-});
+    fireNotification({
+      userId: booking.clientId,
+      type: 'booking_accepted',
+      priority: 'high',
+      title: 'Booking accepted',
+      message: `${displayNameOf(user)} accepted your booking for ${booking.serviceTitle}. Pay the consultation fee of R${fee} to schedule the site visit.`,
+      linkTo: '/client/dashboard?tab=requests',
+      actorId: user.id,
+      actorDisplayName: displayNameOf(user),
+      bookingId: booking.id,
+    });
+
+    const frontendUrl = req.frontendUrl || process.env.FRONTEND_URL || 'http://localhost:3000';
+
+
+      // Send email to client
+  User.findByPk(booking.clientId).then(clientUser => {
+      if (clientUser) {
+        sendBookingAcceptedEmail(
+          clientUser.email, displayNameOf(clientUser), displayNameOf(user!), 
+          booking.serviceTitle, fee, 
+          `${frontendUrl}/service-connect/client/dashboard?tab=requests` // <-- FIXED
+        ).catch(err => logger.error('Email failed', err));
+      }
+    });
 
   logger.info(`Booking ${booking.requestRef} accepted by provider ${user.email}`);
 
@@ -284,17 +320,29 @@ export const declineBooking = catchAsync(async (req: Request, res: Response) => 
 
   await booking.update({ status: 'declined', declineReason: trimmed });
 
-  fireNotification({
-  userId: booking.clientId,
-  type: 'booking_declined',
-  priority: 'normal',
-  title: 'Request declined',
-  message: `${displayNameOf(user)} declined your request for ${booking.serviceTitle}. Reason: ${trimmed}`,
-  linkTo: '/client/dashboard?tab=requests',
-  actorId: user.id,
-  actorDisplayName: displayNameOf(user),
-  bookingId: booking.id,
-});
+    fireNotification({
+      userId: booking.clientId,
+      type: 'booking_declined',
+      priority: 'normal',
+      title: 'Booking declined',
+      message: `${displayNameOf(user)} declined your booking for ${booking.serviceTitle}. Reason: ${trimmed}`,
+      linkTo: '/client/dashboard?tab=requests',
+      actorId: user.id,
+      actorDisplayName: displayNameOf(user),
+      bookingId: booking.id,
+    });
+
+    const frontendUrl = req.frontendUrl || process.env.FRONTEND_URL || 'http://localhost:3000';
+    
+    User.findByPk(booking.clientId).then(clientUser => {
+      if (clientUser) {
+        sendBookingDeclinedEmail(
+          clientUser.email, displayNameOf(clientUser), displayNameOf(user!), 
+          booking.serviceTitle, trimmed, 
+          `${frontendUrl}/service-connect/client/dashboard?tab=requests` // <-- FIXED
+        ).catch(err => logger.error('Email failed', err));
+      }
+    });
 
   logger.info(`Booking ${booking.requestRef} declined by provider ${user.email}`);
 
@@ -581,6 +629,24 @@ export const proposeFinalPrice = catchAsync(async (req: Request, res: Response) 
       actorDisplayName: displayNameOf(user),
       bookingId: booking.id,
     });
+
+    // 👇 ADD THIS EMAIL TRIGGER
+    const frontendUrl = req.frontendUrl || process.env.FRONTEND_URL || 'http://localhost:3000';
+    
+    User.findByPk(booking.clientId).then(clientUser => {
+      if (clientUser) {
+        sendPriceProposedEmail(
+          clientUser.email, 
+          displayNameOf(clientUser), 
+          displayNameOf(user!), 
+          booking.serviceTitle, 
+          num, 
+          note ? String(note).trim() : undefined,
+          `${frontendUrl}/service-connect/client/dashboard?tab=requests`
+        ).catch(err => logger.error('Failed to send price proposed email', err));
+      }
+    });
+    // 👆 END OF EMAIL TRIGGER
 
   } catch (err) {
     await transaction.rollback();
@@ -974,6 +1040,16 @@ export const complainOnBooking = catchAsync(async (req: Request, res: Response) 
     bookingId: booking.id,
   });
 
+  fireStaffNotification({
+    type: 'dispute_raised',
+    title: 'New complaint raised',
+    message: `${displayNameOf(user)} raised a complaint about ${booking.serviceTitle}.`,
+    linkTo: '/admin-dashboard?tab=disputes',
+    actorId: user.id,
+    actorDisplayName: displayNameOf(user),
+    bookingId: booking.id,
+  });
+
   logger.info(`Complaint on ${booking.requestRef} by ${user.email}`);
 
   res.success({ booking: await toApi(booking) }, 'Complaint submitted');
@@ -1030,4 +1106,92 @@ export const getProviderComplaints = catchAsync(async (req: Request, res: Respon
   });
 
   res.success({ complaints: bookings.map(toApi) }, 'Complaints retrieved');
+});
+
+// ==================== GET ALL BOOKINGS (STAFF) ====================
+// Used by admin & employee dashboards. Read-only — no mutations here.
+// Any intervention is routed through the Disputes flow.
+export const getAllBookings = catchAsync(async (req: Request, res: Response) => {
+  const user = req.user;
+  if (!user) return res.error('Not authenticated', 401, 'UNAUTHORIZED');
+  if (user.role !== 'ADMIN' && user.role !== 'EMPLOYEE') {
+    return res.error('Staff only', 403, 'FORBIDDEN');
+  }
+
+  const { status, limit = 200, offset = 0 } = req.query;
+
+  const where: any = {};
+  if (status && typeof status === 'string') {
+    where.status = status;
+  }
+
+  const bookings = await Booking.findAndCountAll({
+    where,
+    include: [withHistory],
+    distinct: true,
+    order: [['updatedAt', 'DESC']],
+    limit: Math.min(parseInt(limit as string) || 200, 500),
+    offset: parseInt(offset as string) || 0,
+  });
+
+  res.success(
+    {
+      bookings: bookings.rows.map(toApi),
+      total: bookings.count,
+      limit: parseInt(limit as string) || 200,
+      offset: parseInt(offset as string) || 0,
+    },
+    'All bookings retrieved'
+  );
+});
+
+// ==================== GET USER'S BOOKINGS (STAFF) ====================
+// Used by staff user-detail panels. Returns bookings where the target
+// user is either the client OR the provider, based on their role.
+// Read-only — no mutations.
+export const getUserBookings = catchAsync(async (req: Request, res: Response) => {
+  const staff = req.user;
+  if (!staff) return res.error('Not authenticated', 401, 'UNAUTHORIZED');
+  if (staff.role !== 'ADMIN' && staff.role !== 'EMPLOYEE') {
+    return res.error('Staff only', 403, 'FORBIDDEN');
+  }
+
+  const userIdParam = req.params.userId;
+  const userId = Array.isArray(userIdParam) ? userIdParam[0] : userIdParam;
+
+  const targetUser = await User.findByPk(userId, {
+    attributes: ['id', 'role'],
+  });
+  if (!targetUser) {
+    return res.error('User not found', 404, 'USER_NOT_FOUND');
+  }
+
+  let where: any = {};
+  if (targetUser.role === 'CLIENT') {
+    where = { clientId: userId };
+  } else if (targetUser.role === 'PROVIDER') {
+    where = { providerId: userId };
+  } else {
+    // ADMIN / EMPLOYEE don't participate in bookings under the current model
+    return res.success(
+      { bookings: [], total: 0, userId, role: targetUser.role },
+      'No bookings for this role'
+    );
+  }
+
+  const bookings = await Booking.findAll({
+    where,
+    include: [withHistory],
+    order: [['updatedAt', 'DESC']],
+  });
+
+  res.success(
+    {
+      bookings: bookings.map(toApi),
+      total: bookings.length,
+      userId,
+      role: targetUser.role,
+    },
+    'User bookings retrieved'
+  );
 });

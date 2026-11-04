@@ -10,6 +10,7 @@ import { generateSecretCode as generateCode } from '../utils/token.utils';
 import logger from '../utils/logger';
 import catchAsync from '../utils/catchAsync';
 import { sendInviteEmail } from '../services/email.service';
+import { RegistrationRequest } from '../models';
 
 export class AdminController {
 
@@ -76,7 +77,7 @@ export class AdminController {
 
     const users = await User.findAndCountAll({
       where,
-      attributes: ['id', 'email', 'firstName', 'lastName', 'phone', 'role', 'status', 'createdAt', 'approvedAt', 'lastLogin'],
+      attributes: ['id', 'email', 'firstName', 'lastName', 'phone', 'role', 'status', 'serviceType', 'companyName', 'registrationNumber', 'createdAt', 'approvedAt', 'lastLogin'],
       order: [['createdAt', 'DESC']],
       limit: parseInt(limit as string),
       offset: parseInt(offset as string)
@@ -96,7 +97,7 @@ export class AdminController {
     const userId = Array.isArray(userIdParam) ? userIdParam[0] : userIdParam; // Handle array case if it occurs
 
     const user = await User.findByPk(userId, {
-      attributes: ['id', 'email', 'firstName', 'lastName', 'phone', 'role', 'status', 'createdAt', 'approvedAt', 'lastLogin', 'approvedBy']
+      attributes: ['id', 'email', 'firstName', 'lastName', 'phone', 'role', 'status', 'serviceType', 'companyName', 'registrationNumber', 'createdAt', 'approvedAt', 'lastLogin', 'approvedBy']
     });
 
     if (!user) {
@@ -153,13 +154,75 @@ export class AdminController {
     }, 'User status updated successfully');
   });
 
+    // Get all pending registration requests
+  getRegistrationRequests = catchAsync(async (req: Request, res: Response) => {
+    const requests = await RegistrationRequest.findAll({
+      order: [['createdAt', 'DESC']],
+    });
+    res.success(requests, 'Requests retrieved');
+  });
+
+  // Decline a registration request
+  declineRegistrationRequest = catchAsync(async (req: Request, res: Response) => {
+    const idParam = req.params.id;
+    const id = Array.isArray(idParam) ? idParam[0] : idParam;
+    const request = await RegistrationRequest.findByPk(id);
+
+    if (!request) return res.error('Request not found', 404, 'NOT_FOUND');
+
+    await request.update({ status: 'declined' });
+    res.success({}, 'Request declined');
+  });
+
+    // Approve a request, generate a code, and email it
+  approveRegistrationRequest = catchAsync(async (req: Request, res: Response) => {
+      const idParam = req.params.id;
+      const id = Array.isArray(idParam) ? idParam[0] : idParam;
+    const adminUser = req.user;
+    
+    const request = await RegistrationRequest.findByPk(id);
+    if (!request) return res.error('Request not found', 404, 'NOT_FOUND');
+    if (request.status === 'approved') return res.error('Already approved', 400, 'ALREADY_APPROVED');
+
+    // 1. Generate the secret code
+    const code = generateCode();
+    const expiresAt = new Date();
+    expiresAt.setHours(expiresAt.getHours() + 24); // 24 hours
+
+    await SecretCode.create({
+      code,
+      expiresAt,
+      createdBy: adminUser!.id,
+      assignedEmail: request.email,
+      isUsed: false,
+      role: request.role === 'PROVIDER' ? 'PROVIDER' : 'EMPLOYEE', // <-- Safe typing
+    });
+
+    // 2. Update request status
+    await request.update({ status: 'approved' });
+
+        // 3. Send the email
+    const frontendUrl = req.frontendUrl || process.env.FRONTEND_URL || 'http://localhost:3000';
+    sendInviteEmail(
+      request.email, 
+      code, 
+      expiresAt, 
+      request.role === 'PROVIDER' ? 'PROVIDER' : 'EMPLOYEE', // <-- Safe typing
+      frontendUrl
+    ).catch(err => 
+      logger.error('Failed to send invite email', err)
+    );
+
+    res.success({ message: 'Approved and code sent successfully' }, 'Approved');
+  });
+
 generateSecretCode = catchAsync(async (req: Request, res: Response) => {
   const errors = validationResult(req);
   if (!errors.isEmpty()) {
     return res.error('Validation failed', 400, 'VALIDATION_ERROR', { errors: errors.array() });
   }
 
-  const { expiresInHours = 24, employeeEmail } = req.body;
+  const { expiresInHours = 24, employeeEmail, role = 'EMPLOYEE' } = req.body;
   const adminUser = req.user;
   
   const frontendUrl = req.frontendUrl || process.env.FRONTEND_URL || 'http://localhost:3000';
@@ -207,6 +270,7 @@ generateSecretCode = catchAsync(async (req: Request, res: Response) => {
     createdBy: adminUser.id, // This is now a UUID
     assignedEmail: employeeEmail,
     isUsed: false,
+    role: role === 'PROVIDER' ? 'PROVIDER' : 'EMPLOYEE', // <-- Safe typing
   });
 
   await AuditLog.create({
@@ -217,7 +281,8 @@ generateSecretCode = catchAsync(async (req: Request, res: Response) => {
     details: { 
       expiresInHours, 
       code: secretCode.code,
-      assignedEmail: employeeEmail
+      assignedEmail: employeeEmail,
+      role: secretCode.role
     },
   });
 
@@ -230,7 +295,13 @@ generateSecretCode = catchAsync(async (req: Request, res: Response) => {
     assignedTo: employeeEmail
   }, 'Secret code generated successfully');
   
-  sendInviteEmail(employeeEmail, code, expiresAt, frontendUrl).catch(error => {
+  sendInviteEmail(
+    employeeEmail, 
+    code, 
+    expiresAt, 
+    role === 'PROVIDER' ? 'PROVIDER' : 'EMPLOYEE', // <-- Safe
+    frontendUrl
+  ).catch(error => {
     logger.error(`Failed to send invite email to ${employeeEmail} for code ${code}: ${error.message}`);
   });
 });
@@ -455,4 +526,51 @@ getActiveEmployees = catchAsync(async (req: Request, res: Response) => {
       offset: parseInt(offset as string)
     }, 'Audit logs retrieved successfully');
   });
+
+    // Resend an invite code for an approved registration request
+  resendRegistrationInvite = catchAsync(async (req: Request, res: Response) => {
+    const idParam = req.params.id;
+    const id = Array.isArray(idParam) ? idParam[0] : idParam;
+    const adminUser = req.user;
+
+    const request = await RegistrationRequest.findByPk(id);
+    if (!request) return res.error('Request not found', 404, 'NOT_FOUND');
+    
+    if (request.status !== 'approved') {
+      return res.error('Only approved requests can have codes resent', 400, 'INVALID_STATUS');
+    }
+
+    // 1. Invalidate any existing unused codes for this email
+    await SecretCode.update(
+      { isUsed: true },
+      { where: { assignedEmail: request.email, isUsed: false } }
+    );
+
+    // 2. Generate a fresh code
+    const code = generateCode();
+    const expiresAt = new Date();
+    expiresAt.setHours(expiresAt.getHours() + 24);
+
+    await SecretCode.create({
+      code,
+      expiresAt,
+      createdBy: adminUser!.id,
+      assignedEmail: request.email,
+      isUsed: false,
+      role: request.role === 'PROVIDER' ? 'PROVIDER' : 'EMPLOYEE',
+    });
+
+    // 3. Send the email
+    const frontendUrl = req.frontendUrl || process.env.FRONTEND_URL || 'http://localhost:3000';
+    sendInviteEmail(
+      request.email, 
+      code, 
+      expiresAt, 
+      request.role === 'PROVIDER' ? 'PROVIDER' : 'EMPLOYEE',
+      frontendUrl
+    ).catch(err => logger.error('Failed to resend invite email', err));
+
+    res.success({ message: 'New invite code sent successfully' }, 'Invite resent');
+  });
 }
+

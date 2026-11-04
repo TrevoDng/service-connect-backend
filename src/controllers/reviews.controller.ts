@@ -48,7 +48,7 @@ export const submitReview = catchAsync(async (req: Request, res: Response) => {
     return res.error('Only clients can submit reviews', 403, 'FORBIDDEN');
   }
 
-  const { bookingId, rating, comment, photos, tags, wouldRecommend } = req.body;
+  const {id, bookingId, rating, comment, photos, tags, wouldRecommend } = req.body;
 
   if (!bookingId) return res.error('bookingId is required', 400, 'MISSING_BOOKING');
   const numRating = Number(rating);
@@ -71,6 +71,7 @@ export const submitReview = catchAsync(async (req: Request, res: Response) => {
   }
 
   const review = await Review.create({
+    id,
     bookingId: booking.id,
     clientId: user.id,
     clientDisplayName: displayNameOf(user),

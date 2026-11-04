@@ -1,6 +1,7 @@
 // src/controllers/notifications.controller.ts
 import { Request, Response } from 'express';
 import { Op } from 'sequelize';
+import User from '../models/User';
 import Notification from '../models/Notification';
 import catchAsync from '../utils/catchAsync';
 import logger from '../utils/logger';
@@ -144,4 +145,47 @@ export async function createNotification(input: {
     workSessionId: input.workSessionId,
     threadId: input.threadId,
   });
+}
+
+// ============================================================
+// NOTIFY ALL STAFF (ADMIN + EMPLOYEE)
+// ============================================================
+export async function notifyStaff(input: {
+  type: string;
+  title: string;
+  message: string;
+  linkTo: string;
+  actorId?: string;
+  actorDisplayName?: string;
+  bookingId?: string;
+}): Promise<void> {
+  try {
+    // Find all active Admins and Employees
+    const staffUsers = await User.findAll({
+      where: { 
+        role: { [Op.in]: ['ADMIN', 'EMPLOYEE'] },
+        status: 'active'
+      },
+      attributes: ['id'],
+    });
+
+    // Create a notification for each staff member
+    const promises = staffUsers.map((staff) =>
+      createNotification({
+        userId: staff.id,
+        type: input.type,
+        priority: 'high',
+        title: input.title,
+        message: input.message,
+        linkTo: input.linkTo,
+        actorId: input.actorId,
+        actorDisplayName: input.actorDisplayName,
+        bookingId: input.bookingId,
+      })
+    );
+
+    await Promise.all(promises);
+  } catch (err) {
+    logger.error('Failed to notify staff', err);
+  }
 }

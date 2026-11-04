@@ -7,6 +7,7 @@ import {
   deleteService,
   getAllActiveServices,
   getServiceById,
+  getCategories,
 } from '../controllers/services.controller';
 import { verifyUserToken, requireRole } from '../services/auth.service';
 
@@ -25,6 +26,8 @@ providerRouter.get('/services/stats', getProviderStats);
 // PUBLIC/SERVICE ROUTER (mounted at /api/services)
 // ============================================================
 export const servicesRouter = Router();
+
+servicesRouter.get('/categories', getCategories);
 
 servicesRouter.get('/', getAllActiveServices);
 servicesRouter.get('/:id', getServiceById);

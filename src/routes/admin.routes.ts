@@ -3,19 +3,25 @@ import { Router } from 'express';
 import { body } from 'express-validator';
 import { AdminController } from '../controllers/admin.controller';
 import { verifyUserToken, requireRole } from '../services/auth.service';
+import { getAllBookings, getUserBookings } from '../controllers/bookings.controller';
+import { getAllThreadsForStaff, getThreadMessagesForStaff } from '../controllers/chat.controller';
 
 const router = Router();
 const adminController = new AdminController();
 
-// All admin routes require authentication and ADMIN role
+// All admin routes require authentication
 router.use(verifyUserToken);
-router.use(requireRole('ADMIN'));
+
+// Role checks are applied per-route:
+//   - ADMIN-only: create-admin, status updates, secret codes, audit logs, approvals
+//   - ADMIN or EMPLOYEE: read-only user listings (used by staff dashboards)
 
 // ==================== ADMIN USER MANAGEMENT ====================
 
-// Create a new admin (only existing admins can do this)
+// Create a new admin (ADMIN only)
 router.post(
   '/create-admin',
+  requireRole('ADMIN'),
   [
     body('firstName').notEmpty().withMessage('First name is required'),
     body('lastName').notEmpty().withMessage('Last name is required'),
@@ -31,24 +37,80 @@ router.post(
   adminController.createAdmin
 );
 
-// Get all users (with optional role filter)
-router.get('/users', adminController.getAllUsers);
+// Get all users (with optional role filter) — ADMIN + EMPLOYEE (read-only)
+router.get(
+  '/users',
+  requireRole('ADMIN', 'EMPLOYEE'),
+  adminController.getAllUsers
+);
 
-// Get user by ID
-router.get('/users/:userId', adminController.getUserById);
+// Get all bookings (staff) — ADMIN + EMPLOYEE, read-only
+router.get(
+  '/bookings',
+  requireRole('ADMIN', 'EMPLOYEE'),
+  getAllBookings
+);
 
-// Update user status (activate/deactivate)
+// Get user by ID — ADMIN + EMPLOYEE (read-only, ready for drill-down)
+router.get(
+  '/users/:userId',
+  requireRole('ADMIN', 'EMPLOYEE'),
+  adminController.getUserById
+);
+
+// Get a specific user's bookings — ADMIN + EMPLOYEE, read-only
+router.get(
+  '/users/:userId/bookings',
+  requireRole('ADMIN', 'EMPLOYEE'),
+  getUserBookings
+);
+
+// Chat observer — ADMIN + EMPLOYEE, read-only
+router.get(
+  '/chat/threads',
+  requireRole('ADMIN', 'EMPLOYEE'),
+  getAllThreadsForStaff
+);
+
+router.get(
+  '/chat/threads/:id/messages',
+  requireRole('ADMIN', 'EMPLOYEE'),
+  getThreadMessagesForStaff
+);
+
+// Update user status (activate/deactivate) — ADMIN only
 router.patch(
   '/users/:userId/status',
+  requireRole('ADMIN'),
   [
     body('status').isIn(['active', 'deactivated']).withMessage('Invalid status'),
   ],
   adminController.updateUserStatus
 );
 
-// Generate secret code for employee registration
+// Request registration secret security code management — ADMIN only
+router.get('/registration-requests', 
+  requireRole('ADMIN'), 
+  adminController.getRegistrationRequests);
+
+router.post(
+  '/registration-requests/:id/resend',
+  requireRole('ADMIN'),
+  adminController.resendRegistrationInvite
+);  
+
+router.post('/registration-requests/:id/approve', 
+  requireRole('ADMIN'), 
+  adminController.approveRegistrationRequest);
+
+router.patch('/registration-requests/:id/decline', 
+  requireRole('ADMIN'), 
+  adminController.declineRegistrationRequest);
+
+// Generate secret code for employee registration — ADMIN only
 router.post(
   '/generate-code',
+  requireRole('ADMIN'),
   [
     body('expiresInHours').optional().isInt({ min: 1, max: 168 }).withMessage('Expires in hours must be between 1 and 168'),
     body('employeeEmail').isEmail().withMessage('Valid employee email is required'),
@@ -56,12 +118,17 @@ router.post(
   adminController.generateSecretCode
 );
 
-// Get all pending employees
-router.get('/pending-employees', adminController.getPendingEmployees);
+// Get all pending employees — ADMIN only
+router.get(
+  '/pending-employees',
+  requireRole('ADMIN'),
+  adminController.getPendingEmployees
+);
 
-// Approve or reject employee
+// Approve or reject employee — ADMIN only
 router.post(
   '/approve-employee',
+  requireRole('ADMIN'),
   [
     body('userId').notEmpty().withMessage('User ID is required'),
     body('approve').isBoolean().withMessage('Approve must be a boolean'),
@@ -70,16 +137,14 @@ router.post(
   adminController.approveEmployee
 );
 
-// Add to admin.routes.ts (inside the router after auth middleware)
+// Secret code management — ADMIN only
+router.get('/secret-codes', requireRole('ADMIN'), adminController.getSecretCodes);
+router.delete('/secret-codes/:codeId', requireRole('ADMIN'), adminController.deleteSecretCode);
 
-// Secret code management
-router.get('/secret-codes', adminController.getSecretCodes);
-router.delete('/secret-codes/:codeId', adminController.deleteSecretCode);
+// Employee management — ADMIN only
+router.get('/active-employees', requireRole('ADMIN'), adminController.getActiveEmployees);
 
-// Employee management
-router.get('/active-employees', adminController.getActiveEmployees);
-
-// Get audit logs
-router.get('/audit-logs', adminController.getAuditLogs);
+// Get audit logs — ADMIN only
+router.get('/audit-logs', requireRole('ADMIN'), adminController.getAuditLogs);
 
 export default router;

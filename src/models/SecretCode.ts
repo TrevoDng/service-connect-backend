@@ -10,6 +10,7 @@ export interface SecretCodeAttributes {
   assignedEmail: string;
   usedBy?: string;
   usedAt?: Date;
+  role?: 'EMPLOYEE' | 'PROVIDER'; // <-- Add this property to track the role associated with the secret code
 }
 
 export interface SecretCodeCreationAttributes extends Optional<SecretCodeAttributes, 'id' | 'isUsed' | 'usedBy' | 'usedAt'> {}
@@ -23,7 +24,8 @@ class SecretCode extends Model<SecretCodeAttributes, SecretCodeCreationAttribute
   declare assignedEmail: string;
   declare usedBy: string;
   declare usedAt: Date;
-  
+  declare role: 'EMPLOYEE' | 'PROVIDER';
+
   public readonly createdAt!: Date;
 }
 
@@ -66,6 +68,11 @@ SecretCode.init(
     usedAt: {
       type: DataTypes.DATE,
       field: 'used_at',
+    },
+    role: {
+      type: DataTypes.ENUM('EMPLOYEE', 'PROVIDER'),
+      allowNull: true,
+      defaultValue: 'EMPLOYEE', // Default to EMPLOYEE if not specified
     },
   },
   {
