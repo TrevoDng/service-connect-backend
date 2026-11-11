@@ -8,6 +8,7 @@ import logger from '../utils/logger';
 import { BookingPriceHistory, User } from '../models';
 import { createNotification, notifyStaff } from './notifications.controller';
 import { sendBookingAcceptedEmail, sendBookingDeclinedEmail, sendBookingRequestedEmail, sendPriceProposedEmail } from '../services/email.service';
+import { emitBookingUpdate } from '../services/sse.services';
 
 // Helper: fire-and-forget notification (never blocks the main flow)
 function fireNotification(input: Parameters<typeof createNotification>[0]): void {
@@ -187,6 +188,9 @@ export const createBooking = catchAsync(async (req: Request, res: Response) => {
 
   logger.info(`Booking ${booking.requestRef} created by client ${user.email}`);
 
+  //emit or sse
+  emitBookingUpdate(booking);
+
   res.status(201).success({ booking: toApi(booking) }, 'Booking created successfully');
 });
 
@@ -290,6 +294,8 @@ export const acceptBooking = catchAsync(async (req: Request, res: Response) => {
 
   logger.info(`Booking ${booking.requestRef} accepted by provider ${user.email}`);
 
+  emitBookingUpdate(booking);
+
   res.success({ booking: toApi(booking) }, 'Booking accepted');
 });
 
@@ -346,6 +352,8 @@ export const declineBooking = catchAsync(async (req: Request, res: Response) => 
 
   logger.info(`Booking ${booking.requestRef} declined by provider ${user.email}`);
 
+  emitBookingUpdate(booking);
+
   res.success({ booking: toApi(booking) }, 'Booking declined');
 });
 
@@ -394,6 +402,8 @@ export const payConsultation = catchAsync(async (req: Request, res: Response) =>
 });
 
   logger.info(`Consultation fee paid for booking ${booking.requestRef} by client ${user.email}`);
+
+  emitBookingUpdate(booking);
 
   res.success({ booking: toApi(booking) }, 'Consultation fee paid');
 });
@@ -446,6 +456,8 @@ export const clockInConsultation = catchAsync(async (req: Request, res: Response
 
   logger.info(`Consultation clocked in for ${booking.requestRef} by provider ${user.email}`);
 
+  emitBookingUpdate(booking);
+
   res.success({ booking: toApi(booking) }, 'Clocked in successfully');
 });
 
@@ -482,6 +494,8 @@ export const clockOutConsultation = catchAsync(async (req: Request, res: Respons
   });
 
   logger.info(`Consultation clocked out for ${booking.requestRef} by provider ${user.email}`);
+
+  emitBookingUpdate(booking);
 
   res.success({ booking: toApi(booking) }, 'Clocked out successfully');
 });
@@ -537,6 +551,8 @@ export const submitConsultation = catchAsync(async (req: Request, res: Response)
 });
 
   logger.info(`Consultation submitted for ${booking.requestRef} by provider ${user.email}`);
+
+  emitBookingUpdate(booking);
 
   res.success({ booking: toApi(booking) }, 'Consultation submitted successfully');
 });
@@ -657,6 +673,9 @@ export const proposeFinalPrice = catchAsync(async (req: Request, res: Response) 
   logger.info(
     `Provider ${user.email} ${isReProposal ? 're-proposed' : 'proposed'} R${num} on ${booking.requestRef}`
   );
+
+  emitBookingUpdate(fresh!);
+
   res.success({ booking: toApi(fresh!) }, 'Final price proposed');
 });
 
@@ -719,6 +738,9 @@ export const acceptFinalPrice = catchAsync(async (req: Request, res: Response) =
 
   const fresh = await Booking.findByPk(id, { include: [withHistory] });
   logger.info(`Client ${user.email} accepted price on ${booking.requestRef}`);
+
+  emitBookingUpdate(fresh!);
+
   res.success({ booking: toApi(fresh!) }, 'Price agreed');
 });
 
@@ -801,6 +823,9 @@ export const counterPrice = catchAsync(async (req: Request, res: Response) => {
 
   const fresh = await Booking.findByPk(id, { include: [withHistory] });
   logger.info(`Client ${user.email} countered with R${num} on ${booking.requestRef}`);
+
+  emitBookingUpdate(fresh!);
+
   res.success({ booking: toApi(fresh!) }, 'Counter sent');
 });
 
@@ -863,6 +888,9 @@ export const acceptCounter = catchAsync(async (req: Request, res: Response) => {
 
   const fresh = await Booking.findByPk(id, { include: [withHistory] });
   logger.info(`Provider ${user.email} accepted counter on ${booking.requestRef}`);
+
+  emitBookingUpdate(fresh!);
+
   res.success({ booking: toApi(fresh!) }, 'Counter accepted');
 });
 
@@ -946,6 +974,9 @@ export const holdFirm = catchAsync(async (req: Request, res: Response) => {
   logger.info(
     `${user.role} ${user.email} held firm at R${firmAmount} on ${booking.requestRef}`
   );
+
+  emitBookingUpdate(fresh!);
+
   res.success({ booking: toApi(fresh!) }, 'Held firm');
 });
 
@@ -996,6 +1027,9 @@ export const disputePrice = catchAsync(async (req: Request, res: Response) => {
 
   const fresh = await Booking.findByPk(id, { include: [withHistory] });
   logger.info(`${user.role} ${user.email} disputed price on ${booking.requestRef}: ${reason}`);
+
+  emitBookingUpdate(fresh!);
+
   res.success({ booking: toApi(fresh!) }, 'Price disputed');
 });
 
@@ -1052,6 +1086,8 @@ export const complainOnBooking = catchAsync(async (req: Request, res: Response) 
 
   logger.info(`Complaint on ${booking.requestRef} by ${user.email}`);
 
+  emitBookingUpdate(booking);
+
   res.success({ booking: await toApi(booking) }, 'Complaint submitted');
 });
 
@@ -1089,6 +1125,8 @@ export const confirmComplete = catchAsync(async (req: Request, res: Response) =>
   });
 
   logger.info(`Job ${booking.requestRef} confirmed complete by ${user.email}`);
+
+  emitBookingUpdate(booking);
 
   res.success({ booking: await toApi(booking) }, 'Job confirmed and closed');
 });

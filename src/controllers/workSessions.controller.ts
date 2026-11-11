@@ -5,6 +5,7 @@ import WorkSession from '../models/WorkSession';
 import catchAsync from '../utils/catchAsync';
 import { createNotification } from './notifications.controller';
 import logger from '../utils/logger';
+import { emitBookingUpdate, emitSessionUpdate } from '../services/sse.services';
 
 function fireNotification(input: Parameters<typeof createNotification>[0]): void {
   createNotification(input).catch((err) =>
@@ -99,6 +100,7 @@ export const arriveAtSite = catchAsync(async (req: Request, res: Response) => {
       logger.info(`Code regenerated on session ${existing.id} by ${user.email}`);
       return res.success({ session: sessionToApi(existing) }, 'New code generated');
     }
+
     return res.error('A work session already exists for this booking', 409, 'SESSION_EXISTS');
   }
 
@@ -130,6 +132,9 @@ export const arriveAtSite = catchAsync(async (req: Request, res: Response) => {
   });
 
   logger.info(`Work session ${session.id} created for ${booking.requestRef} by ${user.email}`);
+
+  emitSessionUpdate(session);
+  emitBookingUpdate(booking);
 
   res.status(201).success({ session: sessionToApi(session) }, 'Arrived on site');
 });
@@ -225,6 +230,8 @@ export const confirmGate = catchAsync(async (req: Request, res: Response) => {
 
   logger.info(`Client ${user.email} confirmed gate for session ${session.id}`);
 
+  emitSessionUpdate(session);
+
   res.success({ session: sessionToApi(session) }, 'Gate access confirmed');
 });
 
@@ -270,6 +277,8 @@ export const denyGate = catchAsync(async (req: Request, res: Response) => {
   });
 
   logger.info(`Client ${user.email} denied gate for session ${session.id}`);
+
+  emitSessionUpdate(session);
 
   res.success({ session: sessionToApi(session) }, 'Gate access denied');
 });
@@ -332,6 +341,8 @@ export const proceedAnyway = catchAsync(async (req: Request, res: Response) => {
 
   logger.info(`Provider ${user.email} proceeded without confirmation on session ${session.id}`);
 
+  emitSessionUpdate(session);
+
   res.success({ session: sessionToApi(session) }, 'Proceeded without confirmation');
 });
 
@@ -392,6 +403,9 @@ export const retroactiveResponse = catchAsync(async (req: Request, res: Response
     });
 
     logger.info(`Client ${user.email} retro-confirmed gate for session ${session.id}`);
+    
+    emitSessionUpdate(session);
+    
     return res.success({ session: sessionToApi(session) }, 'Retroactively confirmed');
   }
 
@@ -420,6 +434,9 @@ export const retroactiveResponse = catchAsync(async (req: Request, res: Response
     });
   
   logger.info(`Client ${user.email} disputed gate for session ${session.id}`);
+  
+  emitSessionUpdate(session);
+
   res.success({ session: sessionToApi(session) }, 'Gate disputed — support will review');
 });
 
@@ -490,6 +507,9 @@ export const clockIn = catchAsync(async (req: Request, res: Response) => {
 
   logger.info(`Clock in on session ${session.id} by ${user.email}`);
 
+  emitSessionUpdate(session);
+  emitBookingUpdate(booking);
+
   res.success({ session: sessionToApi(session) }, 'Clocked in');
 });
 
@@ -534,6 +554,8 @@ export const clockOut = catchAsync(async (req: Request, res: Response) => {
 
   logger.info(`Clock out on session ${session.id} by ${user.email} (${addedHours.toFixed(2)}h)`);
 
+  emitSessionUpdate(session);
+
   res.success({ session: sessionToApi(session) }, 'Clocked out');
 });
 
@@ -577,6 +599,9 @@ export const completeSession = catchAsync(async (req: Request, res: Response) =>
   await booking.update({ status: 'completed' });
 
   logger.info(`Session ${session.id} completed by ${user.email}`);
+
+  emitSessionUpdate(session);
+  emitBookingUpdate(booking);
 
   res.success({ session: sessionToApi(session) }, 'Session completed');
 });
@@ -629,6 +654,8 @@ export const setBeforePhotos = catchAsync(async (req: Request, res: Response) =>
 
   logger.info(`Before photos set (${photos.length}) on session ${session.id}`);
 
+  emitSessionUpdate(session);
+
   res.success({ session: sessionToApi(session) }, 'Before photos saved');
 });
 
@@ -653,6 +680,8 @@ export const deleteBeforePhoto = catchAsync(async (req: Request, res: Response) 
   await session.update({
     beforePhotos: session.beforePhotos.filter((p) => p.id !== photoId),
   });
+
+  emitSessionUpdate(session);
 
   res.success({ session: sessionToApi(session) }, 'Photo deleted');
 });
@@ -685,6 +714,8 @@ export const setFinalPhotos = catchAsync(async (req: Request, res: Response) => 
 
   logger.info(`Final photos set (${photos.length}) on session ${session.id}`);
 
+  emitSessionUpdate(session);
+
   res.success({ session: sessionToApi(session) }, 'Final photos saved');
 });
 
@@ -709,6 +740,8 @@ export const deleteFinalPhoto = catchAsync(async (req: Request, res: Response) =
   await session.update({
     finalPhotos: session.finalPhotos.filter((p) => p.id !== photoId),
   });
+
+  emitSessionUpdate(session);
 
   res.success({ session: sessionToApi(session) }, 'Photo deleted');
 });
@@ -744,6 +777,8 @@ export const upsertProgressStage = catchAsync(async (req: Request, res: Response
 
   logger.info(`Progress stage ${existing >= 0 ? 'updated' : 'added'} on session ${session.id}`);
 
+  emitSessionUpdate(session);
+
   res.success({ session: sessionToApi(session) }, 'Progress stage saved');
 });
 
@@ -768,6 +803,8 @@ export const deleteProgressStage = catchAsync(async (req: Request, res: Response
   await session.update({
     progressStages: session.progressStages.filter((s) => s.id !== stageId),
   });
+
+  emitSessionUpdate(session);
 
   res.success({ session: sessionToApi(session) }, 'Progress stage deleted');
 });
@@ -816,6 +853,9 @@ export const reopenSession = catchAsync(async (req: Request, res: Response) => {
   });
 
   logger.info(`Session ${session.id} reopened by ${user.email}`);
+
+  emitSessionUpdate(session);
+  emitBookingUpdate(booking);
 
   res.success({ session: sessionToApi(session) }, 'Session reopened');
 });

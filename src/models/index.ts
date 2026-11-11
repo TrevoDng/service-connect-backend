@@ -13,6 +13,8 @@ import Review, { ReviewAttributes, ReviewCreationAttributes } from './Review';
 import ChatThread, { ChatThreadAttributes, ChatThreadCreationAttributes } from './ChatThread';
 import ChatMessage, { ChatMessageAttributes, ChatMessageCreationAttributes, ChatMessageStatus, ChatAttachment } from './ChatMessage';
 import RegistrationRequest from './RegistrationRequest';
+import SupportMessage, { SupportMessageAttributes, SupportMessageCreationAttributes, SupportMessageStatus, SupportSenderRole } from './SupportMessage';
+import SupportTicket, { SupportRequesterRole, SupportTicketAttributes, SupportTicketCreationAttributes, SupportTicketStatus } from './SupportTicket';
 
 export {
   sequelize,
@@ -23,16 +25,20 @@ export {
   Booking,
   BookingPriceHistory,
   WorkSession,
+  
   Notification,
   NotificationAttributes,
   NotificationCreationAttributes,
+
   Dispute,
   DisputeMessage,
   DisputeMessageAttributes,
   DisputeMessageCreationAttributes,
+
   Review,
   ReviewAttributes,
   ReviewCreationAttributes,
+
   ChatThread,
   ChatThreadAttributes,
   ChatThreadCreationAttributes,
@@ -42,4 +48,15 @@ export {
   ChatMessageStatus,
   ChatAttachment,
   RegistrationRequest,
+  
+  SupportTicket,
+  SupportTicketAttributes,
+  SupportTicketCreationAttributes,
+  SupportTicketStatus,
+  SupportRequesterRole,
+  SupportMessage,
+  SupportMessageAttributes,
+  SupportMessageCreationAttributes,
+  SupportMessageStatus,
+  SupportSenderRole,
 };

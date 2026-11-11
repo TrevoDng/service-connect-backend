@@ -37,7 +37,15 @@ const connectDB = async () => {
     console.log('✅ PostgreSQL connected successfully');
     
     // Import models AFTER connection to avoid circular deps
-    const { User, SecretCode, AuditLog, Booking, BookingPriceHistory } = await import('../models/index.js');
+    const { 
+      User, 
+      SecretCode, 
+      AuditLog, 
+      Booking, 
+      BookingPriceHistory,
+      SupportTicket,
+      SupportMessage, 
+    } = await import('../models/index.js');
     
     // Setup associations (without firebase)
     User.hasMany(SecretCode, { 
@@ -76,6 +84,45 @@ const connectDB = async () => {
     });
     BookingPriceHistory.belongsTo(Booking, {
       foreignKey: 'bookingId',
+    });
+
+    // ============================================================
+    // NEW: Staff Support Ticketing associations
+    // ============================================================
+
+    SupportTicket.belongsTo(User, {
+      as: 'requester',
+      foreignKey: 'requesterId',
+    });
+
+    SupportTicket.belongsTo(User, {
+      as: 'assignedStaff',
+      foreignKey: 'assignedStaffId',
+    });
+
+    SupportTicket.hasMany(SupportMessage, {
+      as: 'messages',
+      foreignKey: 'ticketId',
+    });
+
+    SupportMessage.belongsTo(SupportTicket, {
+      as: 'ticket',
+      foreignKey: 'ticketId',
+    });
+
+    SupportMessage.belongsTo(User, {
+      as: 'sender',
+      foreignKey: 'senderId',
+    });
+
+    User.hasMany(SupportTicket, {
+      as: 'supportTickets',
+      foreignKey: 'requesterId',
+    });
+
+    User.hasMany(SupportTicket, {
+      as: 'assignedSupportTickets',
+      foreignKey: 'assignedStaffId',
     });
     
     // Sync models

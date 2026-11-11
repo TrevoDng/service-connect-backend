@@ -3,6 +3,7 @@ import { Request, Response } from 'express';
 import { Op } from 'sequelize';
 import User from '../models/User';
 import Notification from '../models/Notification';
+import { emit } from '../utils/sseRegistry';
 import catchAsync from '../utils/catchAsync';
 import logger from '../utils/logger';
 
@@ -132,7 +133,7 @@ export async function createNotification(input: {
   workSessionId?: string;
   threadId?: string;
 }): Promise<Notification> {
-  return Notification.create({
+  const n = await Notification.create({
     userId: input.userId,
     type: input.type,
     priority: input.priority ?? 'normal',
@@ -145,6 +146,11 @@ export async function createNotification(input: {
     workSessionId: input.workSessionId,
     threadId: input.threadId,
   });
+
+  // Real-time bell — covers chat, support, bookings, disputes, reviews, etc.
+  emit(input.userId, 'notification:new', { id: n.id });
+
+  return n;
 }
 
 // ============================================================
@@ -155,9 +161,11 @@ export async function notifyStaff(input: {
   title: string;
   message: string;
   linkTo: string;
+  linkToByRole?: { ADMIN?: string; EMPLOYEE?: string };   // ← ADD this line
   actorId?: string;
   actorDisplayName?: string;
   bookingId?: string;
+  threadId?: string;
 }): Promise<void> {
   try {
     // Find all active Admins and Employees
@@ -166,23 +174,26 @@ export async function notifyStaff(input: {
         role: { [Op.in]: ['ADMIN', 'EMPLOYEE'] },
         status: 'active'
       },
-      attributes: ['id'],
+      attributes: ['id', 'role'],
     });
 
     // Create a notification for each staff member
-    const promises = staffUsers.map((staff) =>
-      createNotification({
-        userId: staff.id,
-        type: input.type,
-        priority: 'high',
-        title: input.title,
-        message: input.message,
-        linkTo: input.linkTo,
-        actorId: input.actorId,
-        actorDisplayName: input.actorDisplayName,
-        bookingId: input.bookingId,
-      })
-    );
+     const promises = staffUsers.map((staff) => {
+  const link =
+    input.linkToByRole?.[staff.role as 'ADMIN' | 'EMPLOYEE'] ?? input.linkTo;
+  return createNotification({
+    userId: staff.id,
+    type: input.type,
+    priority: 'high',
+    title: input.title,
+    message: input.message,
+    linkTo: link,                    // ← per-user link
+    actorId: input.actorId,
+    actorDisplayName: input.actorDisplayName,
+    bookingId: input.bookingId,
+    threadId: input.threadId,
+  });
+});
 
     await Promise.all(promises);
   } catch (err) {

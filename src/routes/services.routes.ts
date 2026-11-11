@@ -10,6 +10,7 @@ import {
   getCategories,
 } from '../controllers/services.controller';
 import { verifyUserToken, requireRole } from '../services/auth.service';
+import { getProviderPublicProfile } from '../controllers/provider.controller';
 
 // ============================================================
 // PROVIDER-SCOPED ROUTER (mounted at /api/provider)
@@ -30,6 +31,7 @@ export const servicesRouter = Router();
 servicesRouter.get('/categories', getCategories);
 
 servicesRouter.get('/', getAllActiveServices);
+servicesRouter.get('/provider-profile/:id', getProviderPublicProfile);
 servicesRouter.get('/:id', getServiceById);
 
 // authenticated provider-only below

@@ -20,6 +20,10 @@ import uploadRoutes from './routes/upload.routes';
 import path from 'path';
 import { apiLimiter } from './middleware/rateLimit.middleware';
 import registrationRoutes from './routes/registration.routes';
+import supportRoutes from './routes/support.routes';
+import { closeStaleSupportTickets } from './utils/supportAutoClose';
+import sseRoutes from './routes/sse.routes';
+import payfastRoutes from './routes/payfast.routes';
 dotenv.config();
 
 const app = express();
@@ -92,11 +96,15 @@ app.use('/api/bookings', detectFrontendUrl, clientWorkSessionsRouter);
 app.use('/api/notifications', detectFrontendUrl, notificationsRoutes);
 app.use('/api/disputes', detectFrontendUrl, disputesRoutes);
 app.use('/api/chat', detectFrontendUrl, chatRoutes);
+app.use('/api/support', detectFrontendUrl, supportRoutes);
 app.use('/api/reviews', detectFrontendUrl, reviewsRoutes);
 // Serve the uploaded files statically
 app.use('/uploads', express.static(path.join(process.cwd(), 'uploads')));
 // Upload endpoint
 app.use('/api/upload', detectFrontendUrl, uploadRoutes);
+app.use('/api/events', sseRoutes);
+
+app.use('/api/payfast', detectFrontendUrl, payfastRoutes);
 
 // ============================================================
 // ✅ 5. Error Handling
@@ -116,6 +124,12 @@ app.use((err: any, req: Request, res: Response, next: any) => {
 app.listen(port, () => {
   console.log(`🚀 Service Connect Backend running at http://localhost:${port}`);
   console.log(`📊 Database: ${process.env.DB_NAME || 'service_connect_db'}`);
+
+  setInterval(() => {
+    closeStaleSupportTickets().catch((err) =>
+      console.error('[support] auto-close sweep failed', err)
+    );
+  }, 10 * 60 * 1000); // every 10 minutes
 });
 
 

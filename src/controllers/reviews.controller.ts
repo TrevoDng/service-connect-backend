@@ -6,6 +6,7 @@ import Booking from '../models/Booking';
 import catchAsync from '../utils/catchAsync';
 import logger from '../utils/logger';
 import { createNotification } from './notifications.controller';
+import { emit } from '../utils/sseRegistry';
 
 function fireNotification(input: Parameters<typeof createNotification>[0]): void {
   createNotification(input).catch((err) =>
@@ -97,6 +98,8 @@ export const submitReview = catchAsync(async (req: Request, res: Response) => {
   });
 
   logger.info(`Review ${review.id} submitted for ${booking.requestRef} by ${user.email}`);
+
+  emit(review.providerId, 'review:updated', { reviewId: review.id });
 
   res.status(201).success({ review: toApi(review) }, 'Review submitted');
 });
@@ -193,6 +196,8 @@ export const replyToReview = catchAsync(async (req: Request, res: Response) => {
   });
 
   logger.info(`Review ${review.id} replied by ${user.email}`);
+
+  emit(review.clientId, 'review:updated', { reviewId: review.id });
 
   res.success({ review: toApi(review) }, 'Reply posted');
 });

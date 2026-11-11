@@ -5,6 +5,7 @@ import { AdminController } from '../controllers/admin.controller';
 import { verifyUserToken, requireRole } from '../services/auth.service';
 import { getAllBookings, getUserBookings } from '../controllers/bookings.controller';
 import { getAllThreadsForStaff, getThreadMessagesForStaff } from '../controllers/chat.controller';
+import { claimTicket, closeTicket, getStaffTicketMessages, getStaffTickets, markStaffTicketRead, postStaffMessage, releaseTicket, reopenTicket } from '../controllers/support.controller';
 
 const router = Router();
 const adminController = new AdminController();
@@ -76,6 +77,56 @@ router.get(
   '/chat/threads/:id/messages',
   requireRole('ADMIN', 'EMPLOYEE'),
   getThreadMessagesForStaff
+);
+
+// ==================== SUPPORT TICKETS (STAFF) ====================
+
+router.get(
+  '/support/tickets',
+  requireRole('ADMIN', 'EMPLOYEE'),
+  getStaffTickets
+);
+
+router.get(
+  '/support/tickets/:id/messages',
+  requireRole('ADMIN', 'EMPLOYEE'),
+  getStaffTicketMessages
+);
+
+router.post(
+  '/support/tickets/:id/claim',
+  requireRole('ADMIN', 'EMPLOYEE'),
+  claimTicket
+);
+
+router.post(
+  '/support/tickets/:id/release',
+  requireRole('ADMIN', 'EMPLOYEE'),
+  releaseTicket
+);
+
+router.post(
+  '/support/tickets/:id/messages',
+  requireRole('ADMIN', 'EMPLOYEE'),
+  postStaffMessage
+);
+
+router.post(
+  '/support/tickets/:id/close',
+  requireRole('ADMIN', 'EMPLOYEE'),
+  closeTicket
+);
+
+router.post(
+  '/support/tickets/:id/reopen',
+  requireRole('ADMIN', 'EMPLOYEE'),
+  reopenTicket
+);
+
+router.post(
+  '/support/tickets/:id/read',
+  requireRole('ADMIN', 'EMPLOYEE'),
+  markStaffTicketRead
 );
 
 // Update user status (activate/deactivate) — ADMIN only

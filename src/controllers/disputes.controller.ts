@@ -9,6 +9,8 @@ import logger from '../utils/logger';
 import { createNotification, notifyStaff } from './notifications.controller';
 import { sendDisputeRaisedEmail } from '../services/email.service';
 import { User } from '../models';
+import { emit } from '../utils/sseRegistry';
+import { emitBookingUpdate } from '../services/sse.services';
 
 // ============================================================
 // HELPERS
@@ -178,6 +180,13 @@ export const raiseDispute = catchAsync(async (req: Request, res: Response) => {
   
   logger.info(`Dispute ${dispute.id} raised by ${user.email} on ${booking.requestRef}`);
 
+  emit(dispute.raisedByUserId, 
+    'dispute:created', 
+    { disputeId: dispute.id }); 
+  emit(dispute.againstUserId, 
+    'dispute:created', 
+    { disputeId: dispute.id });
+
   res.status(201).success({ dispute: await toApi(dispute) }, 'Dispute raised');
 });
 
@@ -305,6 +314,11 @@ export const addMessage = catchAsync(async (req: Request, res: Response) => {
     }
   }
 
+  emit(dispute.raisedByUserId, 
+    'dispute:updated', { disputeId: dispute.id }); 
+  emit(dispute.againstUserId, 
+    'dispute:updated', { disputeId: dispute.id });
+
   res.success(
     {
       message: {
@@ -361,6 +375,11 @@ export const requestInfo = catchAsync(async (req: Request, res: Response) => {
     });
   }
 
+  emit(dispute.raisedByUserId, 
+    'dispute:updated', { disputeId: dispute.id });
+  emit(dispute.againstUserId, 
+    'dispute:updated', { disputeId: dispute.id });
+
   res.success({ dispute: await toApi(dispute) }, 'Requested more info');
 });
 
@@ -397,10 +416,11 @@ export const resolveDispute = catchAsync(async (req: Request, res: Response) => 
   });
 
   // Apply booking status change if provided
+  let updatedBooking: Booking | null = null;
   if (finalBookingStatus) {
-    const booking = await Booking.findByPk(dispute.bookingId);
-    if (booking) {
-      await booking.update({ status: finalBookingStatus });
+    updatedBooking = await Booking.findByPk(dispute.bookingId);
+    if (updatedBooking) {
+      await updatedBooking.update({ status: finalBookingStatus });
     }
   }
 
@@ -432,6 +452,15 @@ export const resolveDispute = catchAsync(async (req: Request, res: Response) => 
   }
 
   logger.info(`Dispute ${dispute.id} resolved by ${user.email}: ${resolution}`);
+
+  emit(dispute.raisedByUserId, 
+    'dispute:updated', { disputeId: dispute.id });
+  emit(dispute.againstUserId, 
+    'dispute:updated', { disputeId: dispute.id });    
+  
+    if (updatedBooking) {
+      emitBookingUpdate(updatedBooking);
+    }
 
   res.success({ dispute: await toApi(dispute) }, 'Dispute resolved');
 });

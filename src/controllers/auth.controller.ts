@@ -20,7 +20,18 @@ export const register = catchAsync(async (req: Request, res: Response) => {
     return res.error('Validation failed', 400, 'VALIDATION_ERROR', { errors: errors.array() });
   }
 
-  const { firstName, lastName, email, password, secretCode, phone, rememberMe } = req.body;
+  const { 
+    firstName, 
+    lastName, 
+    email, 
+    password, 
+    secretCode, 
+    phone, 
+    rememberMe,
+    serviceType,
+    companyName,
+    registrationNumber 
+  } = req.body;
   
   const ipAddress = req.ip;
   const userAgent = req.headers['user-agent'];
@@ -108,6 +119,9 @@ export const register = catchAsync(async (req: Request, res: Response) => {
       verificationToken: verificationToken,
       verificationTokenExpires: tokenExpires,
       secretCode: validatedSecretCode,
+      serviceType: serviceType || null,
+      companyName: companyName || null,
+      registrationNumber: registrationNumber || null,
     }, { transaction });
 
     if (secretCode) {

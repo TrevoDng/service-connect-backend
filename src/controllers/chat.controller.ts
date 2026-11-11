@@ -8,6 +8,7 @@ import User from '../models/User';
 import catchAsync from '../utils/catchAsync';
 import logger from '../utils/logger';
 import { createNotification } from './notifications.controller';
+import { emit } from '../utils/sseRegistry';
 
 // ============================================================
 // HELPERS
@@ -343,6 +344,13 @@ export const postMessage = catchAsync(async (req: Request, res: Response) => {
       actorDisplayName: senderName,
       threadId,
     });
+
+    // Real-time push to both participants (covers recipient + sender's other tabs)
+    const payload = { threadId, message: toMessageApi(message) };
+      emit(thread.clientId, 'chat:message:new', payload);
+      if (thread.providerId !== thread.clientId) {
+        emit(thread.providerId, 'chat:message:new', payload);
+      }
   }
 
   logger.info(`Chat message ${message.id} in thread ${threadId} from ${user.email}`);
@@ -379,6 +387,12 @@ export const markThreadRead = catchAsync(async (req: Request, res: Response) => 
       },
     }
   );
+
+  // Tell both sides the thread was read so ticks flip to "read" live
+  emit(thread.clientId, 'chat:thread:read', { threadId, readerId: user.id, updated });
+    if (thread.providerId !== thread.clientId) {
+      emit(thread.providerId, 'chat:thread:read', { threadId, readerId: user.id, updated });
+  }
 
   res.success({ updated }, 'Thread marked read');
 });

@@ -11,6 +11,8 @@ import logger from '../utils/logger';
 import catchAsync from '../utils/catchAsync';
 import { sendInviteEmail } from '../services/email.service';
 import { RegistrationRequest } from '../models';
+import { emit } from '../utils/sseRegistry';
+import { emitStaffEvent } from '../services/sse.services';
 
 export class AdminController {
 
@@ -147,6 +149,8 @@ export class AdminController {
 
     logger.info(`User ${user.email} status updated to ${status} by ${adminUser?.email}`);
 
+    emit(user.id, 'user:updated', { userId: user.id, status });
+
     res.success({
       id: user.id,
       email: user.email,
@@ -171,6 +175,9 @@ export class AdminController {
     if (!request) return res.error('Request not found', 404, 'NOT_FOUND');
 
     await request.update({ status: 'declined' });
+
+    void emitStaffEvent('registration:updated', { requestId: request.id, status: 'declined' });
+
     res.success({}, 'Request declined');
   });
 
@@ -200,6 +207,8 @@ export class AdminController {
 
     // 2. Update request status
     await request.update({ status: 'approved' });
+
+    void emitStaffEvent('registration:updated', { requestId: request.id, status: 'approved' });
 
         // 3. Send the email
     const frontendUrl = req.frontendUrl || process.env.FRONTEND_URL || 'http://localhost:3000';
@@ -471,6 +480,9 @@ getActiveEmployees = catchAsync(async (req: Request, res: Response) => {
 
         logger.info(`Employee ${employee.email} approved by admin ${adminUser?.email}`);
 
+        emit(employee.id, 'user:updated', 
+          { userId: employee.id, status: 'active' });
+
         res.success({ message: 'Employee approved successfully' }, 'Employee approved');
       } else {
         // Reject employee
@@ -494,6 +506,9 @@ getActiveEmployees = catchAsync(async (req: Request, res: Response) => {
         await transaction.commit();
 
         logger.warn(`Employee ${employee.email} rejected by admin ${adminUser?.email}`, { reason });
+
+        emit(employee.id, 'user:updated', 
+          { userId: employee.id, status: 'rejected' })
 
         res.success({ message: 'Employee rejected successfully' }, 'Employee rejected');
       }
@@ -569,6 +584,9 @@ getActiveEmployees = catchAsync(async (req: Request, res: Response) => {
       request.role === 'PROVIDER' ? 'PROVIDER' : 'EMPLOYEE',
       frontendUrl
     ).catch(err => logger.error('Failed to resend invite email', err));
+
+    void emitStaffEvent('registration:updated', 
+      { requestId: request.id, status: request.status, resent: true });
 
     res.success({ message: 'New invite code sent successfully' }, 'Invite resent');
   });
